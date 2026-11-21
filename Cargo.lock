@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "mer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "mer-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "mer-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "notify",
  "serde",
@@ -3036,7 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "mer-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "mer-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "mer-agents",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "mer-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mer-core",
  "rusqlite",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "mer-term"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "futures",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "mer-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "gpui",
@@ -6659,7 +6659,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",

@@ -5,6 +5,8 @@ usa versionado semántico mientras no llegue a 1.0, las versiones `0.x` pueden c
 
 ## [Sin publicar]
 
+## [0.1.1] - 2026-11-21
+
 ### Añadido
 - **Releases en GitHub**: un workflow crea el `.rpm` y el `.deb` al subir una etiqueta `v*`
   (o a mano desde Actions). Se compilan para `x86-64-v2` y sin PGO. Hay también un workflow
