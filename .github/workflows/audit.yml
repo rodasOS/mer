@@ -1,13 +1,15 @@
 name: Audit
 
 # Checks the dependencies for reported vulnerabilities, bad licenses and unknown sources
-# (rules in deny.toml). Runs on every push, and weekly so a new advisory is noticed even when
-# the code did not change. Vulnerabilities fail the job; "unmaintained" crates only warn.
+# (rules in deny.toml). Runs on pushes to main, on pull requests that touch dependencies, and
+# weekly so a new advisory is noticed even when the code did not change. Vulnerabilities fail
+# the job; "unmaintained" crates only warn.
 
 on:
   push:
     branches: [main]
   pull_request:
+    paths: [Cargo.lock, "**/Cargo.toml", deny.toml]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -17,6 +19,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Replaces `target-cpu=native` from .cargo/config.toml, which `cargo install` would pick up
+  # here and bake into a cached binary built for another runner's CPU.
+  RUSTFLAGS: "-C target-cpu=x86-64-v2"
 
 jobs:
   deny:

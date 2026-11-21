@@ -12,6 +12,10 @@ env:
   CARGO_TERM_COLOR: always
   # Load fontconfig at run time instead of linking it (see .cargo/config.toml).
   RUST_FONTCONFIG_DLOPEN: "1"
+  # RUSTFLAGS from the environment replace `target-cpu=native` from .cargo/config.toml. With
+  # `native`, proc-macros and build scripts restored from the cache were built for another
+  # runner's CPU and could crash the compiler here.
+  RUSTFLAGS: "-C target-cpu=x86-64-v2"
 
 jobs:
   check:
@@ -19,8 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # NOTE: this workflow has not been run yet. mer is developed on Fedora and the system
-      # libraries GPUI needs on Ubuntu were not verified; adjust this list if the build fails.
       - name: System libraries
         run: |
           sudo apt-get update
@@ -34,12 +36,14 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v2-ci
 
       - name: Format
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
