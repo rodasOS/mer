@@ -168,6 +168,6 @@ WAYLAND_DISPLAY=/run/user/$(id -u)/wayland-1 cargo run
 - Con `keep_running_on_close`, si `mer` se cae las terminales mueren con él (no hay demonio
   aparte, ADR 0003/0005). No hay icono de bandeja, por decisión del mantenedor.
 - Wayland no deja subir al frente una ventana ya abierta (`activate` no implementado).
-- Sin ejecutar aún en GitHub: `.github/workflows/` (ci, audit, release y release-windows). `deny.toml`
-  y `cargo audit` sí se ejecutaron en local. No hay confirmación al cerrar una
+- `release-windows.yml` nunca se ha ejecutado y fallará hasta portar el código (ver `TODO.md`). Los
+  demás workflows (ci, audit, release) ya corrieron en GitHub. No hay confirmación al cerrar una
   pestaña con un programa corriendo.

@@ -25,6 +25,8 @@ usa versionado semántico mientras no llegue a 1.0, las versiones `0.x` pueden c
 - La instalación de hooks conserva permisos y enlaces simbólicos, no pisa la primera copia de
   seguridad y escapa la ruta del ejecutable; la carpeta del socket se corrige a `0700`.
 - Workflows: la etiqueta ya no se interpola en un script y las releases no usan caché.
+- CI: compila con `x86-64-v2` y una caché nueva para no depender de la CPU del runner; `audit.yml`
+  ya no corre en cada pull request, solo si cambian las dependencias.
 - Dependencias actualizadas (`notify` 9 y el resto de versiones compatibles): `cargo audit` no
   reporta vulnerabilidades. Las acciones de GitHub usan Node 24 y están fijadas por SHA.
 
