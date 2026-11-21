@@ -1,0 +1,36 @@
+name: Reporte de error
+description: Algo no funciona como debería
+labels: [bug]
+body:
+  - type: textarea
+    id: que-paso
+    attributes:
+      label: Qué pasó
+      description: Qué esperabas y qué ocurrió en su lugar.
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Cómo reproducirlo
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versión de mer
+      description: La salida de `mer --version` y, si compilaste desde el repo, el commit.
+  - type: input
+    id: entorno
+    attributes:
+      label: Entorno
+      description: Distribución, escritorio (KDE, GNOME…), GPU y driver Vulkan.
+  - type: textarea
+    id: registro
+    attributes:
+      label: Registro
+      description: La salida de `MER_LOG=debug mer`, si hay algo relevante.
+      render: text

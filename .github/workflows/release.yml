@@ -1,0 +1,69 @@
+name: Release
+
+# Builds the .deb and .rpm and attaches them to a GitHub release.
+#   - Push a tag like `v0.1.0`, or
+#   - run the workflow by hand from the Actions tab and give it a tag name.
+#
+# The binaries target x86-64-v2 (any x86-64 PC from ~2009 on) instead of the build machine's
+# CPU, so they run everywhere. To build for your own CPU, see "Compilar para tu CPU" in the README.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update (for example v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Load fontconfig at run time instead of linking it (see .cargo/config.toml).
+  RUST_FONTCONFIG_DLOPEN: "1"
+  # RUSTFLAGS from the environment replace `target-cpu=native` from .cargo/config.toml.
+  RUSTFLAGS: "-C target-cpu=x86-64-v2"
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  linux-packages:
+    # Ubuntu 22.04 has an older glibc than current distros, so the binary runs on them too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libvulkan-dev libfontconfig-dev libssl-dev
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      # No build cache here on purpose: a release is built from scratch so a cached artifact
+      # can never end up inside it.
+      - name: Install packaging tools
+        run: cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1
+
+      - name: Build
+        run: cargo build --release -p mer --features x11
+
+      - name: Package
+        run: |
+          cargo deb --no-build --no-strip -p mer
+          cargo generate-rpm -p crates/mer
+          mkdir dist
+          cp target/debian/*.deb target/generate-rpm/*.rpm dist/
+          cd dist && sha256sum * > SHA256SUMS
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          tag_name: ${{ env.TAG }}
+          generate_release_notes: true
+          files: dist/*

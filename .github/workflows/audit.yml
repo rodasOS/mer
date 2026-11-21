@@ -1,0 +1,36 @@
+name: Audit
+
+# Checks the dependencies for reported vulnerabilities, bad licenses and unknown sources
+# (rules in deny.toml). Runs on every push, and weekly so a new advisory is noticed even when
+# the code did not change. Vulnerabilities fail the job; "unmaintained" crates only warn.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny@0.22.0
+
+      - name: Check advisories, licenses, bans and sources
+        run: cargo deny check

@@ -1,0 +1,15 @@
+# Weekly pull requests for outdated GitHub Actions and Cargo dependencies.
+# GPUI is pinned to a commit on purpose (ADR 0001): it is ignored here and upgraded by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: gpui
+      - dependency-name: gpui_platform

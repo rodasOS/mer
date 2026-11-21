@@ -1,0 +1,42 @@
+name: Release (Windows)
+
+# Manual only: run it from the Actions tab once the Windows port exists.
+#
+# WILL FAIL TODAY. mer does not build on Windows yet: the IPC uses Unix sockets, agent detection
+# and the shell's working directory read /proc, sounds use pw-play, and paths follow XDG.
+# The list of work is in TODO.md ("Port a Windows").
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach mer.exe to (for example v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Build
+        run: cargo build --release -p mer
+
+      - name: Attach mer.exe to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Passed through the environment, never interpolated into the script.
+          TAG: ${{ inputs.tag }}
+        run: |
+          cp target/release/mer.exe mer-windows-x86_64.exe
+          gh release upload "$TAG" mer-windows-x86_64.exe --clobber
