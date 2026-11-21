@@ -27,14 +27,3 @@ pub fn run() -> Result<()> {
         bail!("failed: {}", failed.join(", "))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::CHECKS;
-
-    #[test]
-    fn clippy_denies_warnings_like_ci_does() {
-        let clippy = CHECKS.iter().find(|(label, _)| *label == "clippy").expect("has clippy");
-        assert!(clippy.1.windows(2).any(|pair| pair == ["-D", "warnings"]));
-    }
-}

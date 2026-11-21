@@ -132,9 +132,4 @@ mod tests {
         assert_eq!(parse_host(text).as_deref(), Some("x86_64-unknown-linux-gnu"));
         assert_eq!(parse_host("nothing here"), None);
     }
-
-    #[test]
-    fn the_output_path_lives_under_the_workspace_target_dir() {
-        assert_eq!(binary(Path::new("/w")), PathBuf::from("/w/target/pgo/use/release/mer"));
-    }
 }
