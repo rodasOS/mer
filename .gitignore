@@ -1,0 +1,12 @@
+/target
+*.zst
+.env
+.claude/
+settings.local.json
+.env*
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.profdata
+*.profraw

@@ -1,0 +1,9 @@
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[alias]
+xtask = "run --package xtask --"
+
+# No -dev packages and no sudo on this machine: load fontconfig at runtime instead of linking it.
+[env]
+RUST_FONTCONFIG_DLOPEN = "1"

@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/mer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+publish = false
+description = "A fast terminal emulator for Linux, with spaces that can sleep and coding-agent awareness"
+repository = "https://github.com/rodasOS/mer"
+readme = "README.md"
+keywords = ["terminal", "terminal-emulator", "gpui", "wayland", "agents"]
+categories = ["command-line-utilities"]
+
+[workspace.dependencies]
+mer-core = { path = "crates/mer-core" }
+mer-term = { path = "crates/mer-term" }
+mer-agents = { path = "crates/mer-agents" }
+mer-store = { path = "crates/mer-store" }
+mer-config = { path = "crates/mer-config" }
+mer-ipc = { path = "crates/mer-ipc" }
+mer-ui = { path = "crates/mer-ui" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+mimalloc = "0.1"
+
+# Pinned on purpose: GPUI has no stable release, upgrade deliberately (see ADR 0001).
+gpui = { git = "https://github.com/zed-industries/zed", rev = "4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce", default-features = false, features = ["wayland", "font-kit"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce", default-features = false, features = ["wayland"] }
+alacritty_terminal = "0.26"
+futures = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

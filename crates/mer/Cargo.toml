@@ -1,0 +1,61 @@
+[package]
+name = "mer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description.workspace = true
+repository.workspace = true
+
+[dependencies]
+mer-core.workspace = true
+mer-term.workspace = true
+mer-agents.workspace = true
+mer-store.workspace = true
+mer-config.workspace = true
+mer-ipc.workspace = true
+mer-ui.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+mimalloc.workspace = true
+
+[features]
+# Release builds enable this so mer also runs on X11 sessions.
+x11 = ["mer-ui/x11"]
+
+[lints]
+workspace = true
+
+# Packages built by the release workflow: `cargo deb` and `cargo generate-rpm`.
+[package.metadata.deb]
+name = "mer"
+maintainer = "rodasOS <https://github.com/rodasOS/mer>"
+section = "x11"
+priority = "optional"
+extended-description = "A fast terminal emulator with spaces that can sleep and coding-agent awareness."
+depends = "libfontconfig1, libxkbcommon0, libvulkan1, libwayland-client0, libxkbcommon-x11-0, libxcb1"
+assets = [
+    ["target/release/mer", "usr/bin/mer", "755"],
+    ["../../assets/mer.desktop", "usr/share/applications/mer.desktop", "644"],
+    ["../../assets/mer.svg", "usr/share/icons/hicolor/scalable/apps/mer.svg", "644"],
+    ["../../LICENSE", "usr/share/doc/mer/copyright", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "mer"
+summary = "A fast terminal emulator with spaces that can sleep and coding-agent awareness"
+assets = [
+    { source = "target/release/mer", dest = "/usr/bin/mer", mode = "755" },
+    { source = "assets/mer.desktop", dest = "/usr/share/applications/mer.desktop", mode = "644" },
+    { source = "assets/mer.svg", dest = "/usr/share/icons/hicolor/scalable/apps/mer.svg", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/mer/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+fontconfig = "*"
+libxkbcommon = "*"
+vulkan-loader = "*"
+libxkbcommon-x11 = "*"

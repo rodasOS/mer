@@ -1,0 +1,31 @@
+[package]
+name = "mer-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+mer-agents.workspace = true
+mer-config.workspace = true
+mer-core.workspace = true
+mer-ipc.workspace = true
+mer-store.workspace = true
+mer-term.workspace = true
+futures.workspace = true
+notify-rust = "4"
+serde_json = "1"
+tracing.workspace = true
+
+[features]
+# Also open windows on X11 (GNOME/X11, XFCE, ...). Off by default: it needs extra system libraries.
+x11 = ["gpui/x11", "gpui_platform/x11"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"

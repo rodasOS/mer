@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=mer
+GenericName=Terminal
+Comment=GPU-accelerated terminal emulator for working with agents
+Exec=mer
+Icon=mer
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=mer
+Keywords=terminal;shell;agents;
