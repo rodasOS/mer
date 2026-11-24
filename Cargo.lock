@@ -2107,7 +2107,6 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce#4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2117,7 +2116,6 @@ dependencies = [
  "gpui",
  "gpui_util",
  "itertools",
- "js-sys",
  "log",
  "parking_lot",
  "profiling",
@@ -2126,7 +2124,6 @@ dependencies = [
  "swash",
  "unicode-bidi",
  "unicode-segmentation",
- "web-sys",
  "wgpu",
  "zed-font-kit",
 ]
@@ -3006,6 +3003,7 @@ dependencies = [
  "mer-term",
  "mer-ui",
  "mimalloc",
+ "rustix",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5969,7 +5967,6 @@ dependencies = [
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
  "wgpu-core-deps-linux-android-bsd",
- "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -5995,14 +5992,6 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-linux-android-bsd"
-version = "30.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d80dc0009b2ef6767635140cacf90a007"
-dependencies = [
- "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-core-deps-wasm"
 version = "30.0.0"
 source = "git+https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d80dc0009b2ef6767635140cacf90a007"
 dependencies = [

@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 mimalloc.workspace = true
+rustix.workspace = true
 
 [features]
 # Release builds enable this so mer also runs on X11 sessions.

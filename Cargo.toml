@@ -31,12 +31,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 mimalloc = "0.1"
+rustix = { version = "1", default-features = false, features = ["std", "thread"] }
 
 # Pinned on purpose: GPUI has no stable release, upgrade deliberately (see ADR 0001).
 gpui = { git = "https://github.com/zed-industries/zed", rev = "4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce", default-features = false, features = ["wayland", "font-kit"] }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "4a4c8150f03ef3c5e0c4f837dc0263c137f5b0ce", default-features = false, features = ["wayland"] }
 alacritty_terminal = "0.26"
 futures = "0.3"
+
+# GPUI's `gpui_wgpu` with one change: try Vulkan alone before Vulkan + OpenGL (ADR 0007).
+[patch."https://github.com/zed-industries/zed"]
+gpui_wgpu = { path = "vendor/gpui_wgpu" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
