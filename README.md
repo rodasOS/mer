@@ -5,7 +5,7 @@ para trabajar con agentes de programación (Claude Code, Codex CLI, Gemini CLI, 
 perder rapidez: arranca en unos 300 ms, no gasta CPU en reposo y deja *dormir* los espacios de
 trabajo que no estás usando.
 
-![mer con tres espacios de colores, pestañas y un agente trabajando](docs/images/main.png)
+![mer con espacios de colores, terminales sueltas, pestañas y un agente trabajando](docs/images/main.png)
 
 [![CI](https://github.com/rodasOS/mer/actions/workflows/ci.yml/badge.svg)](https://github.com/rodasOS/mer/actions/workflows/ci.yml)
 [![Audit](https://github.com/rodasOS/mer/actions/workflows/audit.yml/badge.svg)](https://github.com/rodasOS/mer/actions/workflows/audit.yml)
@@ -62,9 +62,9 @@ funciones que de verdad hacen falta al trabajar con varios proyectos y agentes a
   (también dentro de programas como vim o htop, con `Shift`).
 - **Panel de ajustes** gráfico, temas en TOML y recarga en caliente de la configuración.
 
-| Menú contextual | Ajustes |
-|---|---|
-| ![menú](docs/images/menu.png) | ![ajustes](docs/images/settings.png) |
+| Menú contextual | Ajustes | Terminal suelta |
+|---|---|---|
+| ![menú](docs/images/menu.png) | ![ajustes](docs/images/settings.png) | ![terminal suelta](docs/images/terminal.png) |
 
 ## Instalación
 
