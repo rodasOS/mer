@@ -9,7 +9,7 @@ use gpui::{
     AnyElement, ClickEvent, ClipboardItem, Context, FocusHandle, Focusable, Font, FontStyle,
     FontWeight, Hsla, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
     ScrollEvent, StatefulInteractiveElement, StrikethroughStyle, Styled, TextAlign, TextRun,
-    UnderlineStyle, Window, canvas, div, fill, point, px, size,
+    UnderlineStyle, Window, canvas, div, fill, point, px, relative, size,
 };
 use gpui::{MouseButton as UiButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 use mer_term::alacritty_terminal::event::Event;
@@ -21,6 +21,7 @@ use mer_term::alacritty_terminal::term::cell::Flags;
 use mer_term::alacritty_terminal::vte::ansi::{Color, CursorShape};
 use mer_term::keys::{KeyInput, encode};
 use mer_term::mouse::{self, MouseAction, MouseButton, MouseEvent};
+use mer_term::scrollbar::{ScrollState, Thumb, offset_for_thumb_top};
 use mer_term::search::Search;
 use mer_term::{GridSize, Session, ShellCommand, SpawnOptions};
 
@@ -121,6 +122,7 @@ pub struct TerminalView {
     /// What the search bar shows. `Some` exactly while the bar is open.
     search_bar: Option<SearchBar>,
     search_focus: FocusHandle,
+    scrollbar: ScrollbarState,
     /// Where focus should go on the next frame, once a window is at hand.
     pending_focus: Option<PendingFocus>,
     _events: gpui::Task<()>,
@@ -132,6 +134,24 @@ struct SearchBar {
     /// Matches in the whole history, counted up to `SEARCH_COUNT_CAP`.
     total: usize,
 }
+
+/// What decides whether the scrollbar is shown, and the drag in progress.
+#[derive(Debug, Default)]
+struct ScrollbarState {
+    /// The mouse is over this terminal.
+    hovered: bool,
+    /// The bar stays visible for a moment after the view scrolls.
+    flashing: bool,
+    /// Bumped on every flash, so only the last one's timer hides the bar.
+    flash_generation: u64,
+    /// While dragging the thumb: how far below the thumb's top the mouse grabbed it.
+    grab: Option<f32>,
+    /// Output arrived while the view was scrolled up.
+    unseen_output: bool,
+}
+
+/// How long the scrollbar stays after the last scroll.
+const SCROLLBAR_FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
 
 #[derive(Clone, Copy)]
 enum PendingFocus {
@@ -197,6 +217,7 @@ impl TerminalView {
             search: Rc::default(),
             search_bar: None,
             search_focus: cx.focus_handle(),
+            scrollbar: ScrollbarState::default(),
             pending_focus: None,
             _events: task,
         }
@@ -209,6 +230,9 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let saw_output = events.iter().any(|event| matches!(event, Event::Wakeup));
+        if saw_output && session.borrow().scroll_state().is_scrolled() {
+            self.scrollbar.unseen_output = true;
+        }
         if saw_output && !self.activity_pending {
             self.activity_pending = true;
             cx.spawn(async move |this, cx| {
@@ -383,6 +407,7 @@ impl TerminalView {
                 .top(u(10.0))
                 .right(u(12.0))
                 .w(u(360.0))
+                .max_w(relative(0.9))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -438,6 +463,163 @@ impl TerminalView {
                 ))
                 .into_any_element(),
         )
+    }
+
+    /// Brings the view back to the latest output.
+    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        self.session.borrow().scroll_to_bottom();
+        self.scrollbar.unseen_output = false;
+        cx.notify();
+    }
+
+    /// Shows the scrollbar now and hides it again after [`SCROLLBAR_FLASH`], unless something
+    /// scrolls in between. One timer per scroll, no polling.
+    fn flash_scrollbar(&mut self, cx: &mut Context<Self>) {
+        self.scrollbar.flashing = true;
+        self.scrollbar.flash_generation += 1;
+        let generation = self.scrollbar.flash_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SCROLLBAR_FLASH).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.scrollbar.flash_generation == generation {
+                    this.scrollbar.flashing = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Height of the scrollbar track: the grid's height.
+    fn track_height(&self) -> f32 {
+        f32::from(self.session.borrow().size().lines) * f32::from(self.metrics.get().line_height)
+    }
+
+    /// A press on the scrollbar track: grab the thumb, or jump there and carry on dragging.
+    fn on_scrollbar_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let state = self.session.borrow().scroll_state();
+        let track = self.track_height();
+        let Some(thumb) = Thumb::compute(state, track) else { return };
+        let y = f32::from(event.position.y - self.metrics.get().origin.y);
+        let on_thumb = y >= thumb.top && y <= thumb.top + thumb.height;
+        let grab = if on_thumb { y - thumb.top } else { thumb.height / 2.0 };
+        self.scrollbar.grab = Some(grab);
+        if !on_thumb {
+            self.drag_thumb_to(y - grab, cx);
+        }
+        cx.notify();
+    }
+
+    /// Moves the view so the thumb's top is `top` pixels down the track.
+    fn drag_thumb_to(&mut self, top: f32, cx: &mut Context<Self>) {
+        let state = self.session.borrow().scroll_state();
+        let track = self.track_height();
+        let Some(thumb) = Thumb::compute(state, track) else { return };
+        let offset = offset_for_thumb_top(state, track, thumb.height, top);
+        self.session.borrow().scroll_to_offset(offset);
+        cx.notify();
+    }
+
+    /// The thumb and the jump button, over the grid's right edge. Nothing in a full-screen
+    /// program (it has no scrollback) or when the setting is off.
+    fn render_scroll_controls(
+        &self,
+        state: ScrollState,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let settings = cx.global::<AppSettings>();
+        let enabled = settings.config.terminal.scrollbar;
+        let scale = settings.config.appearance.ui_scale;
+        // Cheapest checks first: the mode needs the terminal's lock.
+        if !enabled
+            || !state.has_history()
+            || self.session.borrow().mode().contains(TermMode::ALT_SCREEN)
+        {
+            return Vec::new();
+        }
+        let u = move |value: f32| px(value * scale);
+        let chrome = &self.palette.chrome;
+        let (text, dim, accent) = (chrome.text, chrome.text_dim, chrome.accent);
+        let mut controls = Vec::new();
+
+        let bar = &self.scrollbar;
+        let visible = bar.hovered || bar.flashing || bar.grab.is_some();
+        let track = self.track_height();
+        if let Some(thumb) = Thumb::compute(state, track).filter(|_| visible) {
+            let dragging = bar.grab.is_some();
+            controls.push(
+                div()
+                    .id("scrollbar")
+                    .absolute()
+                    .top(px(6.0))
+                    .right(px(2.0))
+                    .w(u(12.0))
+                    .h(px(track))
+                    .cursor_pointer()
+                    // A press here is not a press on the terminal behind it.
+                    .on_mouse_down(
+                        UiButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.on_scrollbar_down(event, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .id("scrollbar-thumb")
+                            .absolute()
+                            .top(px(thumb.top))
+                            .right(u(2.0))
+                            .w(u(if dragging { 8.0 } else { 6.0 }))
+                            .h(px(thumb.height))
+                            .rounded_full()
+                            .bg(with_alpha(dim, if dragging { 0.75 } else { 0.45 }))
+                            .hover(move |thumb| thumb.bg(with_alpha(dim, 0.75)).w(u(8.0))),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        if state.is_scrolled() {
+            let unseen = bar.unseen_output;
+            let hover = self.palette.hover();
+            let tip_lines = if unseen { vec!["New output below".to_owned()] } else { Vec::new() };
+            controls.push(
+                div()
+                    .id("jump-to-bottom")
+                    .absolute()
+                    .right(u(20.0))
+                    .bottom(u(12.0))
+                    .size(u(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(self.palette.hairline())
+                    .bg(chrome.bar)
+                    .text_color(dim)
+                    .cursor_pointer()
+                    .hover(move |button| button.bg(hover).text_color(text))
+                    .tooltip(crate::tooltip::tip(&self.palette, "Jump to bottom", tip_lines))
+                    .on_mouse_down(UiButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.scroll_to_bottom(cx);
+                    }))
+                    .child("↓")
+                    .children(unseen.then(|| {
+                        div()
+                            .absolute()
+                            .top(u(5.0))
+                            .right(u(5.0))
+                            .size(u(7.0))
+                            .rounded_full()
+                            .bg(accent)
+                    }))
+                    .into_any_element(),
+            );
+        }
+        controls
     }
 
     /// Types text into the shell, as if the user had typed it.
@@ -556,6 +738,7 @@ impl TerminalView {
             }
         } else {
             self.session.borrow().scroll(lines);
+            self.flash_scrollbar(cx);
         }
         cx.notify();
     }
@@ -645,6 +828,11 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.scrollbar.grab.take().is_some() {
+            self.flash_scrollbar(cx);
+            cx.notify();
+            return;
+        }
         if self.mouse_reported(event.modifiers) {
             let Some(hit) = self.cell_at(event.position) else { return };
             let Some(button) = wire_button(event.button) else { return };
@@ -663,6 +851,17 @@ impl TerminalView {
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if let Some(grab) = self.scrollbar.grab {
+            if event.pressed_button == Some(UiButton::Left) {
+                let y = f32::from(event.position.y - self.metrics.get().origin.y);
+                self.drag_thumb_to(y - grab, cx);
+            } else {
+                // The button was let go outside this terminal.
+                self.scrollbar.grab = None;
+                cx.notify();
+            }
+            return;
+        }
         let Some(hit) = self.cell_at(event.position) else { return };
         if self.mouse_reported(event.modifiers) {
             let mode = self.session.borrow().mode();
@@ -731,6 +930,11 @@ impl Render for TerminalView {
             window.defer(cx, move |window, cx| window.focus(&handle, cx));
         }
         let search_bar = self.render_search_bar(cx);
+        let scroll_state = self.session.borrow().scroll_state();
+        if !scroll_state.is_scrolled() {
+            self.scrollbar.unseen_output = false;
+        }
+        let scroll_controls = self.render_scroll_controls(scroll_state, cx);
 
         div()
             .id("terminal")
@@ -781,6 +985,12 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
                 this.on_mouse_move(event, cx);
             }))
+            .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                if this.scrollbar.hovered != *hovered {
+                    this.scrollbar.hovered = *hovered;
+                    cx.notify();
+                }
+            }))
             .child(
                 canvas(
                     |_, _, _| (),
@@ -802,6 +1012,7 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+            .children(scroll_controls)
             .children(search_bar)
     }
 }

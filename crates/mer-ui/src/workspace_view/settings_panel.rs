@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 use gpui::{
     AnyElement, BorrowAppContext as _, ClickEvent, Context, Div, Hsla, InteractiveElement,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px, relative,
 };
 use mer_config::{Config, SidebarSide};
+
+mod performance;
 
 use super::WorkspaceView;
 use crate::actions::ACTION_NAMES;
@@ -24,12 +26,19 @@ pub(super) enum Section {
     Terminal,
     Spaces,
     Agents,
+    Performance,
     Shortcuts,
 }
 
 impl Section {
-    const ALL: [Self; 5] =
-        [Self::Appearance, Self::Terminal, Self::Spaces, Self::Agents, Self::Shortcuts];
+    const ALL: [Self; 6] = [
+        Self::Appearance,
+        Self::Terminal,
+        Self::Spaces,
+        Self::Agents,
+        Self::Performance,
+        Self::Shortcuts,
+    ];
 
     fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|section| section.label().eq_ignore_ascii_case(name))
@@ -41,6 +50,7 @@ impl Section {
             Self::Terminal => "Terminal",
             Self::Spaces => "Spaces",
             Self::Agents => "Agents",
+            Self::Performance => "Performance",
             Self::Shortcuts => "Shortcuts",
         }
     }
@@ -139,6 +149,8 @@ struct Ui {
     hairline: Hsla,
     /// Interface scale, for the lengths in pixels.
     scale: f32,
+    /// The window is narrow: rows stack their control under the label.
+    narrow: bool,
 }
 
 impl Ui {
@@ -184,13 +196,16 @@ fn setting_row(ui: Ui, label: &str, hint: &str, control: AnyElement) -> AnyEleme
         .py_3()
         .border_b_1()
         .border_color(ui.hairline)
+        // In a narrow window the control goes under its label instead of squeezing it.
+        .when(ui.narrow, |row| row.flex_col().items_start().gap_2())
         .child(
             div()
                 .flex()
                 .flex_col()
-                .flex_1()
                 .min_w_0()
                 .gap_1()
+                .when(ui.narrow, Styled::w_full)
+                .when(!ui.narrow, Styled::flex_1)
                 .child(div().text_color(ui.text).child(SharedString::from(label.to_owned())))
                 .child(
                     div().text_xs().text_color(ui.dim).child(SharedString::from(hint.to_owned())),
@@ -341,39 +356,6 @@ impl WorkspaceView {
             ),
             setting_row(
                 ui,
-                "Font size",
-                "Terminal text, in points",
-                self.stepper(
-                    ui,
-                    "font-size",
-                    format!("{:.0}", config.appearance.font_size),
-                    (|c| c.appearance.font_size -= 1.0, |c| c.appearance.font_size += 1.0),
-                    cx,
-                ),
-            ),
-            setting_row(
-                ui,
-                "Line height",
-                "Multiplier of the font size",
-                self.stepper(
-                    ui,
-                    "line-height",
-                    format!("{:.2}", config.appearance.line_height),
-                    (
-                        |c| {
-                            c.appearance.line_height =
-                                round_hundredths(c.appearance.line_height - 0.05);
-                        },
-                        |c| {
-                            c.appearance.line_height =
-                                round_hundredths(c.appearance.line_height + 0.05);
-                        },
-                    ),
-                    cx,
-                ),
-            ),
-            setting_row(
-                ui,
                 "Interface size",
                 "Sidebar, tabs, menus and dialogs, not the terminal text. Ctrl+Alt+= and Ctrl+Alt+-",
                 self.stepper(
@@ -390,6 +372,12 @@ impl WorkspaceView {
                     ),
                     cx,
                 ),
+            ),
+            setting_row(
+                ui,
+                "Interface font",
+                "Edit `ui_font` in config.toml",
+                read_only(ui, &config.appearance.ui_font),
             ),
             setting_row(
                 ui,
@@ -436,18 +424,6 @@ impl WorkspaceView {
                 "Remember window position",
                 "KDE reopens the window where you left it (adds a rule to kwinrulesrc)",
                 self.remember_position_control(ui, cx),
-            ),
-            setting_row(
-                ui,
-                "Terminal font",
-                "Edit `font_family` in config.toml",
-                read_only(ui, &config.appearance.font_family),
-            ),
-            setting_row(
-                ui,
-                "Interface font",
-                "Edit `ui_font` in config.toml",
-                read_only(ui, &config.appearance.ui_font),
             ),
         ]
     }
@@ -499,15 +475,39 @@ impl WorkspaceView {
             ),
             setting_row(
                 ui,
-                "Scrollback",
-                "Lines kept per terminal (new terminals)",
+                "Terminal font",
+                "Edit `font_family` in config.toml",
+                read_only(ui, &config.appearance.font_family),
+            ),
+            setting_row(
+                ui,
+                "Font size",
+                "Terminal text, in points",
                 self.stepper(
                     ui,
-                    "scrollback",
-                    config.terminal.scrollback.to_string(),
+                    "font-size",
+                    format!("{:.0}", config.appearance.font_size),
+                    (|c| c.appearance.font_size -= 1.0, |c| c.appearance.font_size += 1.0),
+                    cx,
+                ),
+            ),
+            setting_row(
+                ui,
+                "Line height",
+                "Multiplier of the font size",
+                self.stepper(
+                    ui,
+                    "line-height",
+                    format!("{:.2}", config.appearance.line_height),
                     (
-                        |c| c.terminal.scrollback = c.terminal.scrollback.saturating_sub(1000),
-                        |c| c.terminal.scrollback = c.terminal.scrollback.saturating_add(1000),
+                        |c| {
+                            c.appearance.line_height =
+                                round_hundredths(c.appearance.line_height - 0.05);
+                        },
+                        |c| {
+                            c.appearance.line_height =
+                                round_hundredths(c.appearance.line_height + 0.05);
+                        },
                     ),
                     cx,
                 ),
@@ -782,10 +782,12 @@ impl WorkspaceView {
             base: self.palette.background,
             hairline: self.palette.hairline(),
             scale: self.ui_scale,
+            narrow: self.is_narrow(),
         };
         let config = cx.global::<AppSettings>().config.clone();
         let section = self.settings.section;
 
+        let narrow = ui.narrow;
         let nav = Section::ALL
             .iter()
             .enumerate()
@@ -793,6 +795,7 @@ impl WorkspaceView {
                 let item = *item;
                 div()
                     .id(("settings-nav", index))
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap_2()
@@ -809,20 +812,78 @@ impl WorkspaceView {
                         this.settings.message = None;
                         cx.notify();
                     }))
-                    .child(div().w(ui.px(3.0)).h(ui.px(16.0)).flex_none().rounded_full().bg(
-                        if item == section { ui.accent } else { gpui::hsla(0.0, 0.0, 0.0, 0.0) },
-                    ))
+                    // The side nav marks the section with a bar; the strip with its background.
+                    .when(!narrow, |row| {
+                        row.child(div().w(ui.px(3.0)).h(ui.px(16.0)).flex_none().rounded_full().bg(
+                            if item == section {
+                                ui.accent
+                            } else {
+                                gpui::hsla(0.0, 0.0, 0.0, 0.0)
+                            },
+                        ))
+                    })
                     .child(item.label())
             })
             .collect::<Vec<_>>();
+
+        // Wide: a column on the left. Narrow: a strip on top that scrolls sideways.
+        let nav_panel = if narrow {
+            div()
+                .id("settings-nav-strip")
+                .w_full()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .overflow_x_scroll()
+                .bg(chrome.sidebar)
+                .border_b_1()
+                .border_color(ui.hairline)
+                .children(nav)
+        } else {
+            div()
+                .id("settings-nav-column")
+                .w(ui.px(190.0))
+                .h_full()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_3()
+                .overflow_y_scroll()
+                .bg(chrome.sidebar)
+                .border_r_1()
+                .border_color(ui.hairline)
+                .child(div().px_3().py_1().text_xs().text_color(ui.dim).child("SETTINGS"))
+                .children(nav)
+        };
 
         let rows = match section {
             Section::Appearance => self.render_appearance(ui, &config, cx),
             Section::Terminal => self.render_terminal(ui, &config, cx),
             Section::Spaces => self.render_spaces(ui, &config, cx),
             Section::Agents => self.render_agents(ui, &config, cx),
+            Section::Performance => self.render_performance(ui, &config, cx),
             Section::Shortcuts => self.render_shortcuts(ui, &config),
         };
+
+        let close = div()
+            .id("settings-close")
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(ui.px(32.0))
+            .rounded_lg()
+            .cursor_pointer()
+            .text_color(ui.dim)
+            .hover(move |button| button.bg(ui.surface).text_color(ui.text))
+            .tooltip(crate::tooltip::tip(&self.palette, "Close settings", ["Esc".to_owned()]))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| this.close_settings(cx)))
+            .child("×");
 
         Some(
             div()
@@ -830,6 +891,9 @@ impl WorkspaceView {
                 .top_0()
                 .left_0()
                 .size_full()
+                // A margin, so the panel never touches the window edge and the percentages below
+                // are measured inside it.
+                .p(ui.px(if narrow { 8.0 } else { 16.0 }))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -848,65 +912,68 @@ impl WorkspaceView {
                             this.on_settings_key(event, cx);
                         }))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        // Its natural size, never more than the window leaves it.
                         .w(ui.px(860.0))
                         .h(ui.px(560.0))
+                        .max_w(relative(1.0))
+                        .max_h(relative(1.0))
                         .flex()
-                        .flex_row()
+                        .when(narrow, Styled::flex_col)
+                        .when(!narrow, Styled::flex_row)
                         .bg(chrome.bar)
                         .border_1()
                         .border_color(ui.hairline)
                         .rounded_xl()
                         .shadow(crate::theme::overlay_shadow(self.palette.is_dark()))
                         .overflow_hidden()
+                        .child(nav_panel)
                         .child(
                             div()
-                                .w(ui.px(190.0))
-                                .h_full()
-                                .flex_none()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .p_3()
-                                .rounded_l_xl()
-                                .bg(chrome.sidebar)
-                                .border_r_1()
-                                .border_color(ui.hairline)
-                                .child(
-                                    div()
-                                        .px_3()
-                                        .py_1()
-                                        .text_xs()
-                                        .text_color(ui.dim)
-                                        .child("SETTINGS"),
-                                )
-                                .children(nav),
-                        )
-                        .child(
-                            div()
-                                .id("settings-content")
                                 .flex_1()
                                 .min_w_0()
-                                .h_full()
-                                .overflow_y_scroll()
-                                .p_5()
+                                .min_h_0()
+                                .flex()
+                                .flex_col()
+                                // The title and the close button stay put; only the rows scroll.
                                 .child(
                                     div()
+                                        .flex_none()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .px_5()
+                                        .pt_4()
                                         .pb_2()
-                                        .text_lg()
-                                        .text_color(ui.text)
-                                        .child(section.label()),
+                                        .child(
+                                            div()
+                                                .text_lg()
+                                                .text_color(ui.text)
+                                                .child(section.label()),
+                                        )
+                                        .child(close),
                                 )
-                                // The rows of a section sit in one card; the last separator is
-                                // pulled out of sight under the card's edge.
                                 .child(
                                     div()
-                                        .rounded_lg()
-                                        .border_1()
-                                        .border_color(ui.hairline)
-                                        .bg(crate::theme::with_alpha(ui.surface, 0.25))
-                                        .px_4()
-                                        .overflow_hidden()
-                                        .child(div().mb(px(-1.0)).children(rows)),
+                                        .id("settings-content")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_y_scroll()
+                                        .px_5()
+                                        .pb_5()
+                                        // The rows of a section sit in one card; the last separator
+                                        // is pulled out of sight under the card's edge.
+                                        .child(
+                                            div()
+                                                .rounded_lg()
+                                                .border_1()
+                                                .border_color(ui.hairline)
+                                                .bg(crate::theme::with_alpha(ui.surface, 0.25))
+                                                .px_4()
+                                                .overflow_hidden()
+                                                .child(div().mb(px(-1.0)).children(rows)),
+                                        ),
                                 ),
                         ),
                 )

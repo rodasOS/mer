@@ -13,6 +13,7 @@ actions!(
         SplitRight,
         SplitDown,
         NewSpace,
+        NewTerminal,
         CloseSpace,
         RenameSpace,
         RenameTab,
@@ -46,6 +47,7 @@ actions!(
         MoveSpaceUp,
         MoveSpaceDown,
         SearchTerminal,
+        ScrollToBottom,
         Quit,
     ]
 );
@@ -84,6 +86,7 @@ binding_table! {
     "split_right" => SplitRight = "ctrl-shift-d",
     "split_down" => SplitDown = "ctrl-shift-e",
     "new_space" => NewSpace = "ctrl-shift-n",
+    "new_terminal" => NewTerminal = "",
     "close_space" => CloseSpace = "",
     "rename_space" => RenameSpace = "",
     "rename_tab" => RenameTab = "",
@@ -118,6 +121,7 @@ binding_table! {
     "move_space_up" => MoveSpaceUp = "",
     "move_space_down" => MoveSpaceDown = "",
     "search" => SearchTerminal = "ctrl-shift-f",
+    "scroll_to_bottom" => ScrollToBottom = "ctrl-shift-end",
     "quit" => Quit = "ctrl-shift-q",
 }
 

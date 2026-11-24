@@ -12,6 +12,8 @@ use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::Processor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 
+use crate::scrollbar::ScrollState;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TermError {
     #[error("failed to open the pty: {0}")]
@@ -169,6 +171,28 @@ impl Session {
         self.term.lock().scroll_display(Scroll::Bottom);
     }
 
+    /// How far the view is scrolled, read under a single lock.
+    pub fn scroll_state(&self) -> ScrollState {
+        let term = self.term.lock();
+        let grid = term.grid();
+        ScrollState {
+            offset: grid.display_offset(),
+            history: grid.history_size(),
+            screen: grid.screen_lines(),
+        }
+    }
+
+    /// Scrolls so that the view sits `offset` lines above the bottom.
+    pub fn scroll_to_offset(&self, offset: usize) {
+        let mut term = self.term.lock();
+        let current = term.grid().display_offset();
+        let delta =
+            i32::try_from(offset).unwrap_or(i32::MAX) - i32::try_from(current).unwrap_or(i32::MAX);
+        if delta != 0 {
+            term.scroll_display(Scroll::Delta(delta));
+        }
+    }
+
     /// The visible screen and scrollback as ANSI text, ready for [`SpawnOptions::restore`].
     pub fn snapshot_ansi(&self) -> String {
         crate::snapshot::snapshot_ansi(&self.term.lock())
@@ -209,6 +233,33 @@ mod tests {
         let (session, _events) =
             Session::spawn(SpawnOptions::new(Some(dir.clone()), size, 100)).expect("shell starts");
         assert_eq!(session.cwd(), Some(dir));
+    }
+
+    #[test]
+    fn scroll_state_follows_the_view_and_clamps_to_the_history() {
+        let size = GridSize { cols: 80, lines: 24, cell_width: 8, cell_height: 16 };
+        // Drawn before the shell starts, so the history is there without waiting for output.
+        let text = (1..=300).fold(String::new(), |mut text, n| {
+            text.push_str(&n.to_string());
+            text.push_str("\r\n");
+            text
+        });
+        let options = SpawnOptions { restore: Some(text), ..SpawnOptions::new(None, size, 1000) };
+        let (session, _events) = Session::spawn(options).expect("shell starts");
+
+        let bottom = session.scroll_state();
+        assert_eq!((bottom.offset, bottom.screen), (0, 24));
+        assert!(bottom.history >= 270, "history is {}", bottom.history);
+        assert!(bottom.has_history() && !bottom.is_scrolled());
+
+        session.scroll_to_offset(50);
+        assert_eq!(session.scroll_state().offset, 50);
+        session.scroll_to_offset(10);
+        assert_eq!(session.scroll_state().offset, 10);
+        session.scroll_to_offset(1_000_000);
+        assert_eq!(session.scroll_state().offset, session.scroll_state().history);
+        session.scroll_to_bottom();
+        assert!(!session.scroll_state().is_scrolled());
     }
 
     #[test]

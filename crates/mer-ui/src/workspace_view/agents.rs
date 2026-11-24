@@ -13,7 +13,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use mer_agents::{AgentKey, AgentStatus, ForegroundProcess, HookKind, program_label};
-use mer_core::{Accent, AgentMemo, PaneId, Program, SpaceState, Tab};
+use mer_core::{Accent, AgentMemo, PaneId, Program, SpaceKind, SpaceState, Tab};
 use mer_ipc::{CtlCommand, Incoming, Request, Response, SpaceInfo};
 
 use super::PromptKind;
@@ -78,6 +78,9 @@ fn is_safe_session_id(id: &str) -> bool {
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// How long a program must stay in the foreground before it names the tab.
+const PROGRAM_TITLE_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
+
 impl WorkspaceView {
     /// Looks at what runs in the foreground of a pane's terminal and updates what the pane
     /// says it runs (for the tab's name) and its agent entry.
@@ -136,6 +139,8 @@ impl WorkspaceView {
                 label: program_label(&process.comm, &process.cmdline),
                 command: current.as_ref().and_then(|program| program.command.clone()),
                 title: current.and_then(|program| program.title),
+                // Whether it is shown is the model's to carry over (`set_pane_program`).
+                visible: false,
             }),
             // The shell just announced a command that has not started yet: keep it.
             (None, Some(program)) if program.label.is_empty() => return false,
@@ -157,7 +162,22 @@ impl WorkspaceView {
         let changed = self.model.set_pane_program(id, program);
         match (before, running) {
             (None, true) => {
-                self.command_started.insert(id, std::time::Instant::now());
+                let started = std::time::Instant::now();
+                self.command_started.insert(id, started);
+                // The program only names the tab if it is still running a moment from now, so
+                // a command that ends in a blink never flashes in the title. One timer per
+                // program, no polling; a later program has a later `started` and is not touched.
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(PROGRAM_TITLE_DELAY).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.command_started.get(&id) == Some(&started)
+                            && this.model.mark_program_visible(id)
+                        {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
             }
             (Some(before), false) => {
                 if let Some(since) = self.command_started.remove(&id) {
@@ -314,11 +334,14 @@ impl WorkspaceView {
         });
     }
 
-    /// `Space · tab` for a pane.
+    /// `Space · tab` for a pane; a terminal on its own is just its name.
     pub(super) fn pane_label(&self, id: PaneId) -> String {
         for space in self.model.spaces() {
             for tab in space.tabs() {
                 if tab.contains(id) {
+                    if space.is_terminal() {
+                        return tab.display_title().to_owned();
+                    }
                     return format!("{} · {}", space.name, tab.display_title());
                 }
             }
@@ -362,6 +385,7 @@ impl WorkspaceView {
                         | CtlCommand::Show { .. }
                         | CtlCommand::ShowWindow
                         | CtlCommand::SpaceNew { .. }
+                        | CtlCommand::TerminalNew { .. }
                         | CtlCommand::SpaceWake { .. }
                         | CtlCommand::Search { .. }
                 )
@@ -398,6 +422,12 @@ impl WorkspaceView {
             CtlCommand::SpaceNew { cwd } => {
                 let cwd = cwd.as_ref().map(PathBuf::from).or_else(|| self.focused_cwd(cx));
                 self.model.add_space(cwd);
+                self.after_model_change(cx);
+                Response::Ok
+            }
+            CtlCommand::TerminalNew { cwd } => {
+                let cwd = cwd.as_ref().map(PathBuf::from).or_else(|| self.focused_cwd(cx));
+                self.model.add_terminal(cwd);
                 self.after_model_change(cx);
                 Response::Ok
             }
@@ -567,9 +597,18 @@ impl WorkspaceView {
             }
             "sidebar-menu" => self.open_menu(MenuTarget::Sidebar, at, cx),
             "palette" => self.open_prompt(PromptKind::Commands, String::new(), cx),
+            "branch-picker" | "node-picker" => {
+                let kind = if what == "branch-picker" {
+                    super::context::PickerKind::Branch
+                } else {
+                    super::context::PickerKind::Node
+                };
+                let id = self.model.focused_pane();
+                self.open_picker(kind, id, at, cx);
+            }
             "rename-space" => {
                 let index = self.model.active_index();
-                let name = self.model.active_space().name.clone();
+                let name = self.model.active_space().editable_name();
                 self.open_prompt(PromptKind::RenameSpace(index), name, cx);
             }
             "rename-tab" => {
@@ -629,7 +668,12 @@ impl WorkspaceView {
             .enumerate()
             .map(|(index, space)| SpaceInfo {
                 index,
-                name: space.name.clone(),
+                name: space.display_name().to_owned(),
+                kind: match space.kind() {
+                    SpaceKind::Space => "space",
+                    SpaceKind::Terminal => "terminal",
+                }
+                .to_owned(),
                 state: if space.state == SpaceState::Sleeping { "sleeping" } else { "awake" }
                     .to_owned(),
                 panes: space.pane_count(),

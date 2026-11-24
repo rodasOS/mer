@@ -7,7 +7,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, relative,
 };
 use mer_core::Accent;
 
@@ -60,7 +60,7 @@ impl Prompt {
 
 impl WorkspaceView {
     fn space_name(&self, index: usize) -> String {
-        self.model.spaces().get(index).map(|s| s.name.clone()).unwrap_or_default()
+        self.model.spaces().get(index).map(|s| s.display_name().to_owned()).unwrap_or_default()
     }
 
     fn tab_name(&self, index: usize) -> String {
@@ -79,7 +79,16 @@ impl WorkspaceView {
         };
         match &prompt.kind {
             PromptKind::Commands => (String::new(), Vec::new()),
-            PromptKind::RenameSpace(_) => ("Rename space".to_owned(), Vec::new()),
+            PromptKind::RenameSpace(index) => {
+                if self.model.spaces().get(*index).is_some_and(mer_core::Space::is_terminal) {
+                    (
+                        "Rename terminal".to_owned(),
+                        vec!["Leave it empty to follow the running program.".to_owned()],
+                    )
+                } else {
+                    ("Rename space".to_owned(), Vec::new())
+                }
+            }
             PromptKind::RenameTab(_) => (
                 "Rename tab".to_owned(),
                 vec!["Leave it empty to follow the running program.".to_owned()],
@@ -285,6 +294,10 @@ impl WorkspaceView {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .w(self.ui_px(if palette { PALETTE_WIDTH } else { DIALOG_WIDTH }))
+            // Never wider or taller than the window leaves it.
+            .max_w(relative(0.95))
+            .max_h(relative(0.9))
+            .overflow_hidden()
             .flex()
             .flex_col()
             .gap_3()

@@ -54,14 +54,17 @@ funciones que de verdad hacen falta al trabajar con varios proyectos y agentes a
 - **Avisos que no estorban:** notificación y un sonido (con volumen ajustable) cuando un agente
   te necesita o termina, y cuando un comando largo acaba mientras mirabas otra cosa.
 - **Menús con clic derecho** sobre espacios, pestañas, terminales y la barra lateral.
-- **Barra lateral** a la derecha (o a la izquierda), plegable y con ancho ajustable; zoom del
+- **Terminales sueltas y espacios** en la misma lista: crea una terminal sin necesidad de un
+  espacio (`+ Terminal`), arrástrala sobre un espacio para unirla, o saca una pestaña como terminal.
+- **Barra lateral** a la derecha (o a la izquierda), con ancho ajustable que **se oculta del todo**
+  (un botón arriba, o `Ctrl+Shift+B`, la vuelve a mostrar); zoom del
   texto y de la interfaz, paleta de comandos y selección con el mouse
   (también dentro de programas como vim o htop, con `Shift`).
 - **Panel de ajustes** gráfico, temas en TOML y recarga en caliente de la configuración.
 
-| Menú contextual | Ajustes | Barra lateral plegada |
-|---|---|---|
-| ![menú](docs/images/menu.png) | ![ajustes](docs/images/settings.png) | ![riel](docs/images/rail.png) |
+| Menú contextual | Ajustes |
+|---|---|
+| ![menú](docs/images/menu.png) | ![ajustes](docs/images/settings.png) |
 
 ## Instalación
 
@@ -269,11 +272,12 @@ mer ctl …                   controla la instancia que corre
 
 ```text
 mer ctl space list | new [--cwd DIR] | sleep [N] | wake N | delete N | color N [COLOR]
+mer ctl terminal new [--cwd DIR]    crea una terminal suelta, fuera de cualquier espacio
 mer ctl tab   sleep N | color N [COLOR] | move DESDE A | to-space PESTAÑA ESPACIO
 mer ctl space move DESDE A
 mer ctl open DIR            abre una pestaña en esa carpeta
 mer ctl search [TEXTO]      busca en la terminal enfocada (sin texto, cierra la barra)
-mer ctl sidebar collapse|expand
+mer ctl sidebar collapse|expand     oculta del todo o muestra la barra lateral
 mer ctl zoom in|out|reset
 mer ctl ui-scale in|out|reset      # tamaño de la interfaz
 mer ctl sidebar-width 300
@@ -390,4 +394,5 @@ git push origin v0.2.0
 
 ## Licencia
 
-[MIT](LICENSE) © 2026 rodasOS.
+[MIT](LICENSE) © 2026 rodasOS. `vendor/gpui_wgpu` es una copia de una crate de GPUI (Zed Industries) y conserva su
+licencia Apache-2.0 (ver su `README.md`).

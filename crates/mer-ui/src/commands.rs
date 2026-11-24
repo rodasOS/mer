@@ -9,6 +9,7 @@ pub enum Cmd {
     SplitRight,
     SplitDown,
     NewSpace,
+    NewTerminal,
     CloseSpace,
     RenameSpace,
     RenameTab,
@@ -46,6 +47,7 @@ pub enum Cmd {
     MoveSpaceUp,
     MoveSpaceDown,
     SearchTerminal,
+    ScrollToBottom,
     Quit,
 }
 
@@ -75,6 +77,7 @@ pub const PALETTE: &[Entry] = &[
     entry("Move tab right", "", Cmd::MoveTabRight),
     entry("Next tab", "Ctrl+Tab", Cmd::NextTab),
     entry("Previous tab", "Ctrl+Shift+Tab", Cmd::PrevTab),
+    entry("New terminal", "", Cmd::NewTerminal),
     entry("New space", "Ctrl+Shift+N", Cmd::NewSpace),
     entry("Rename space", "", Cmd::RenameSpace),
     entry("Close space", "", Cmd::CloseSpace),
@@ -96,6 +99,7 @@ pub const PALETTE: &[Entry] = &[
     entry("Interface smaller", "Ctrl+Alt+-", Cmd::UiScaleDown),
     entry("Reset interface size", "Ctrl+Alt+0", Cmd::UiScaleReset),
     entry("Search in terminal", "Ctrl+Shift+F", Cmd::SearchTerminal),
+    entry("Scroll to bottom", "Ctrl+Shift+End", Cmd::ScrollToBottom),
     entry("Settings", "Ctrl+,", Cmd::OpenSettings),
     entry("Quit mer", "Ctrl+Shift+Q", Cmd::Quit),
 ];

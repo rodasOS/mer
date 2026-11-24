@@ -50,6 +50,9 @@ struct MainView {
 
 impl Global for MainView {}
 
+/// Smallest window, in pixels: about 60 columns by 16 rows of terminal.
+const MIN_WINDOW: (f32, f32) = (480.0, 320.0);
+
 fn window_options(ui: &mer_store::UiState, cx: &App) -> WindowOptions {
     let window_bounds = match ui.window {
         Some(saved) => {
@@ -67,6 +70,8 @@ fn window_options(ui: &mer_store::UiState, cx: &App) -> WindowOptions {
         window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions { title: Some("mer".into()), ..Default::default() }),
         app_id: Some("mer".to_owned()),
+        // Small enough to be a sliver, big enough that every overlay still fits and can be closed.
+        window_min_size: Some(size(px(MIN_WINDOW.0), px(MIN_WINDOW.1))),
         ..Default::default()
     }
 }

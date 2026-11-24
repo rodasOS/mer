@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 /// (spaces, quotes, `$`, backticks, `;`). Plain paths are returned unchanged.
 #[must_use]
 pub fn shell_quote(text: &str) -> String {
+    // A leading `=` or `~` is expanded by zsh (`=foo` to a command's path, `~x` to a home folder).
     let plain = !text.is_empty()
+        && !text.starts_with(['=', '~'])
         && text.chars().all(|c| c.is_ascii_alphanumeric() || "_-./+:@%=,".contains(c));
     if plain { text.to_owned() } else { format!("'{}'", text.replace('\'', r"'\''")) }
 }
@@ -81,6 +83,14 @@ mod tests {
     fn plain_paths_are_not_quoted() {
         assert_eq!(shell_quote("/home/u/.local/bin/mer"), "/home/u/.local/bin/mer");
         assert_eq!(shell_quote("mer"), "mer");
+    }
+
+    #[test]
+    fn words_zsh_would_expand_are_quoted() {
+        assert_eq!(shell_quote("=foo"), "'=foo'");
+        assert_eq!(shell_quote("~root"), "'~root'");
+        // Inside a word, `=` and `~` are harmless.
+        assert_eq!(shell_quote("a=b"), "a=b");
     }
 
     #[test]

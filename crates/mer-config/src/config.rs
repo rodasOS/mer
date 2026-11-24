@@ -73,6 +73,13 @@ pub struct Terminal {
     /// `None` means auto-detect the shell.
     pub shell: Option<String>,
     pub scrollback: u32,
+    /// A scrollbar on each terminal and a button to jump back to the bottom.
+    pub scrollbar: bool,
+    /// A strip under each terminal with the git branch and node version, each one a picker.
+    pub context_chips: bool,
+    /// On the node chip and picker, show the version the project's `.nvmrc` asks for. Read
+    /// lazily (when the folder or branch changes), never by running `nvm`.
+    pub node_version_hint: bool,
 }
 
 /// Space (workspace) behaviour.
@@ -144,7 +151,13 @@ impl Default for Appearance {
 
 impl Default for Terminal {
     fn default() -> Self {
-        Self { shell: None, scrollback: 10_000 }
+        Self {
+            shell: None,
+            scrollback: 10_000,
+            scrollbar: true,
+            context_chips: true,
+            node_version_hint: true,
+        }
     }
 }
 
@@ -205,6 +218,7 @@ mod tests {
         assert!((c.appearance.ui_scale - 1.0).abs() < f32::EPSILON);
         assert_eq!(c.terminal.shell, None);
         assert_eq!(c.terminal.scrollback, 10_000);
+        assert!(c.terminal.scrollbar && c.terminal.context_chips && c.terminal.node_version_hint);
         assert_eq!(c.spaces.auto_sleep_minutes, 0);
         assert!(c.spaces.restore_scrollback);
         assert!(!c.spaces.keep_running_on_close, "closing the window closes mer by default");

@@ -82,12 +82,17 @@ pub enum Ctl {
         #[command(subcommand)]
         command: SpaceCmd,
     },
+    /// Manage terminals on their own (outside any space).
+    Terminal {
+        #[command(subcommand)]
+        command: TerminalCmd,
+    },
     /// Manage the tabs of the active space.
     Tab {
         #[command(subcommand)]
         command: TabCmd,
     },
-    /// Collapse or expand the sidebar.
+    /// Hide or show the sidebar (hidden, it leaves the terminals the whole window).
     Sidebar { state: SidebarState },
     /// Search the focused terminal for a text (leave it out to close the search bar).
     Search { query: Option<String> },
@@ -132,6 +137,16 @@ pub enum TabCmd {
     Move { from: usize, to: usize },
     /// Move a tab of the active space into another space.
     ToSpace { tab: usize, space: usize },
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+pub enum TerminalCmd {
+    /// Create a terminal on its own.
+    New {
+        /// Working directory of the new terminal.
+        #[arg(long)]
+        cwd: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -263,6 +278,9 @@ fn ctl_request(command: &Ctl) -> Request {
     Request::Ctl(match command {
         Ctl::Space { command: SpaceCmd::List } => CtlCommand::SpaceList,
         Ctl::Space { command: SpaceCmd::New { cwd } } => CtlCommand::SpaceNew { cwd: cwd.clone() },
+        Ctl::Terminal { command: TerminalCmd::New { cwd } } => {
+            CtlCommand::TerminalNew { cwd: cwd.clone() }
+        }
         Ctl::Space { command: SpaceCmd::Sleep { index } } => {
             CtlCommand::SpaceSleep { index: *index }
         }
@@ -323,11 +341,14 @@ fn format_spaces(spaces: &[SpaceInfo]) -> String {
         return "no spaces".to_owned();
     }
     let width = spaces.iter().map(|s| s.name.chars().count()).max().unwrap_or(0).max(4);
-    let mut lines = vec![format!("  {:>3}  {:<width$}  {:<8}  PANES", "IDX", "NAME", "STATE")];
+    let mut lines =
+        vec![format!("  {:>3}  {:<8}  {:<width$}  {:<8}  PANES", "IDX", "KIND", "NAME", "STATE")];
     for space in spaces {
         let marker = if space.active { '*' } else { ' ' };
+        // An older instance sends no kind: everything it lists is a space.
+        let kind = if space.kind.is_empty() { "space" } else { space.kind.as_str() };
         lines.push(format!(
-            "{marker} {:>3}  {:<width$}  {:<8}  {}",
+            "{marker} {:>3}  {kind:<8}  {:<width$}  {:<8}  {}",
             space.index, space.name, space.state, space.panes
         ));
     }
@@ -501,6 +522,19 @@ mod tests {
         assert_eq!(request, Request::Ctl(CtlCommand::SpaceWake { index: 3 }));
         let request = ctl_request(&Ctl::Open { dir: "/d".into() });
         assert_eq!(request, Request::Ctl(CtlCommand::Open { dir: "/d".into() }));
+        let request = ctl_request(&Ctl::Terminal { command: TerminalCmd::New { cwd: None } });
+        assert_eq!(request, Request::Ctl(CtlCommand::TerminalNew { cwd: None }));
+    }
+
+    #[test]
+    fn a_terminal_is_created_from_the_command_line() {
+        let cli = parse(&["ctl", "terminal", "new", "--cwd", "/tmp"]);
+        assert_eq!(
+            cli.command,
+            Some(Command::Ctl {
+                command: Ctl::Terminal { command: TerminalCmd::New { cwd: Some("/tmp".into()) } }
+            })
+        );
     }
 
     #[test]
@@ -512,6 +546,7 @@ mod tests {
             SpaceInfo {
                 index: 0,
                 name: "api".into(),
+                kind: "space".into(),
                 state: "awake".into(),
                 panes: 2,
                 active: true,
@@ -519,6 +554,7 @@ mod tests {
             SpaceInfo {
                 index: 1,
                 name: "frontend".into(),
+                kind: String::new(),
                 state: "sleeping".into(),
                 panes: 1,
                 active: false,
@@ -527,7 +563,10 @@ mod tests {
         let table = format_response(&Response::Spaces(spaces)).unwrap();
         let lines: Vec<&str> = table.lines().collect();
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].contains("NAME") && lines[0].contains("STATE"));
+        assert!(
+            lines[0].contains("NAME") && lines[0].contains("STATE") && lines[0].contains("KIND")
+        );
+        assert!(lines[1].contains("space") && lines[2].contains("space"), "no kind means a space");
         assert!(
             lines[1].starts_with('*') && lines[1].contains("api") && lines[1].contains("awake")
         );

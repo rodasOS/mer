@@ -26,6 +26,14 @@ registro (`MER_LOG=warn mer`).
 |---|---|---|
 | `shell` | *(automático)* | Ruta del shell. Sin ella: `$MER_SHELL` si existe, si no `zsh` cuando está instalado, si no tu shell de login. Aplica a las terminales nuevas. |
 | `scrollback` | `10000` | Líneas de historial por terminal (terminales nuevas). |
+| `scrollbar` | `true` | Barra de scroll en cada terminal y botón para volver al final. |
+| `node_version_hint` | `true` | Colorea el chip de node y marca en la lista la versión que pide el proyecto (`.nvmrc` o `.node-version`). Se lee una vez por carpeta o rama, en segundo plano, y nunca ejecuta `nvm`. Requiere los chips. |
+| `context_chips` | `true` | Franja bajo cada terminal con la rama git y la versión de node (nvm), que abren una lista para cambiarlas. Requiere la integración de zsh (ver [`agentes.md`](agentes.md)). |
+
+> **El panel de Ajustes agrupa distinto que este archivo.** Las claves no cambian de tabla; el panel
+> solo las reúne por tema: *Appearance* (tema, tamaño de la interfaz, barra lateral), *Terminal*
+> (shell y tipografía del texto), *Spaces*, *Agents*, *Performance* (historial, barra de scroll,
+> chips y su costo, con los botones «Everything on» y «Lightweight») y *Shortcuts*.
 
 ## `[spaces]`
 

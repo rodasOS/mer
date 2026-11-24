@@ -28,7 +28,8 @@ unidas con `-`).
 | `next_space` / `prev_space` | `ctrl-shift-pagedown` / `ctrl-shift-pageup` | Espacio siguiente o anterior (despierta si dormía) |
 | `focus_left` `focus_right` `focus_up` `focus_down` | `ctrl-shift-` + flecha | Mueve el foco entre paneles |
 | `resize_left` `resize_right` `resize_up` `resize_down` | `alt-shift-` + flecha | Mueve el divisor del panel |
-| `toggle_sidebar` | `ctrl-shift-b` | Pliega o despliega la barra lateral |
+| `toggle_sidebar` | `ctrl-shift-b` | Oculta o muestra la barra lateral (oculta, no deja ninguna franja; el botón de arriba también la vuelve a mostrar) |
+| `new_terminal` | *(sin tecla)* | Crea una terminal suelta, fuera de cualquier espacio. `new_tab` dentro de una terminal también crea otra terminal (una terminal suelta no tiene barra de pestañas) |
 | `open_palette` | `ctrl-shift-p` | Paleta de comandos |
 | `open_settings` | `ctrl-,` | Ajustes |
 | `sleep_space` | `ctrl-shift-z` | Duerme el espacio actual |
@@ -38,6 +39,7 @@ unidas con `-`).
 | `move_tab_left` / `move_tab_right` | *(sin tecla)* | Mueve la pestaña activa un lugar |
 | `move_space_up` / `move_space_down` | *(sin tecla)* | Mueve el espacio activo un lugar |
 | `search` | `ctrl-shift-f` | Abre la búsqueda en el historial de la terminal enfocada |
+| `scroll_to_bottom` | `ctrl-shift-end` | Vuelve al final del historial de la terminal enfocada |
 | `ui_scale_up` | `ctrl-alt-=` `ctrl-alt-+` `ctrl-alt-shift-=` | Agranda la interfaz (no la terminal) |
 | `ui_scale_down` | `ctrl-alt--` | Achica la interfaz |
 | `ui_scale_reset` | `ctrl-alt-0` | Tamaño normal de la interfaz |

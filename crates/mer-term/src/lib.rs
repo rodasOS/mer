@@ -6,6 +6,7 @@
 pub mod keys;
 pub mod mouse;
 pub mod paste;
+pub mod scrollbar;
 pub mod search;
 mod session;
 pub mod snapshot;

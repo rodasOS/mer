@@ -5,14 +5,16 @@
 //! which is what lets a space sleep: its panes stay here, its processes do not.
 
 mod accent;
+mod context;
 mod ids;
 mod layout;
 mod workspace;
 
 pub use accent::Accent;
+pub use context::{NodeFit, NodeNeed, PaneContext, filter_items};
 pub use ids::{PaneId, SpaceId, TabId};
 pub use layout::{Axis, Direction, Layout};
 pub use workspace::{
-    AgentMemo, CloseOutcome, InvalidData, Pane, Program, Space, SpaceData, SpaceState, Tab,
-    TabData, Workspace, WorkspaceData,
+    AgentMemo, CloseOutcome, InvalidData, Pane, Program, Space, SpaceData, SpaceKind, SpaceState,
+    Tab, TabData, Workspace, WorkspaceData,
 };

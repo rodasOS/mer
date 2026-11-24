@@ -9,6 +9,8 @@ use gpui::{
     Styled, Window, div, px,
 };
 
+use mer_core::Space;
+
 use super::{PromptKind, WorkspaceView};
 use crate::theme::{Palette, with_alpha};
 
@@ -20,10 +22,12 @@ pub(super) struct DraggedTab {
     pub movable: bool,
 }
 
-/// A space being dragged.
+/// A space or a terminal being dragged.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct DraggedSpace {
     pub index: usize,
+    /// A terminal dropped on a space joins it as a tab; anywhere else it only changes order.
+    pub terminal: bool,
 }
 
 /// The small pill that follows the cursor while dragging.
@@ -99,27 +103,36 @@ impl WorkspaceView {
     ) -> Stateful<Div> {
         let accent = self.palette.chrome.accent;
         let is_active = index == self.model.active_index();
-        row.on_drag(DraggedSpace { index }, ghost::<DraggedSpace>(&self.palette, name.to_owned()))
-            .drag_over::<DraggedSpace>(move |style, dragged, _, _| {
-                if dragged.index == index {
-                    style
-                } else {
-                    style.bg(with_alpha(accent, 0.18)).border_color(accent)
-                }
-            })
-            .on_drop::<DraggedSpace>(cx.listener(move |this, dragged: &DraggedSpace, _, cx| {
-                this.move_space(dragged.index, index, cx);
-            }))
-            .drag_over::<DraggedTab>(move |style, dragged, _, _| {
-                if dragged.movable && !is_active {
-                    style.bg(with_alpha(accent, 0.28)).border_color(accent)
-                } else {
-                    style
-                }
-            })
-            .on_drop::<DraggedTab>(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
-                this.request_move_tab_to_space(dragged.index, index, cx);
-            }))
+        let spaces = self.model.spaces();
+        let terminal = spaces.get(index).is_some_and(Space::is_terminal);
+        row.on_drag(
+            DraggedSpace { index, terminal },
+            ghost::<DraggedSpace>(&self.palette, name.to_owned()),
+        )
+        .drag_over::<DraggedSpace>(move |style, dragged, _, _| {
+            if dragged.index == index {
+                style
+            } else if dragged.terminal && !terminal {
+                // Joining a space: a stronger mark than reordering.
+                style.bg(with_alpha(accent, 0.28)).border_color(accent)
+            } else {
+                style.bg(with_alpha(accent, 0.18)).border_color(accent)
+            }
+        })
+        .on_drop::<DraggedSpace>(cx.listener(move |this, dragged: &DraggedSpace, _, cx| {
+            this.drop_space(dragged.index, index, cx);
+        }))
+        // A terminal has exactly one tab, so tabs are only dropped on spaces.
+        .drag_over::<DraggedTab>(move |style, dragged, _, _| {
+            if dragged.movable && !is_active && !terminal {
+                style.bg(with_alpha(accent, 0.28)).border_color(accent)
+            } else {
+                style
+            }
+        })
+        .on_drop::<DraggedTab>(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+            this.request_move_tab_to_space(dragged.index, index, cx);
+        }))
     }
 
     /// Reorders the tabs of the active space.
@@ -129,6 +142,23 @@ impl WorkspaceView {
             self.after_reorder(cx);
         }
         moved
+    }
+
+    /// A space or terminal was dropped on a row: a terminal dropped on a space joins it as a tab,
+    /// anything else reorders.
+    pub(super) fn drop_space(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let spaces = self.model.spaces();
+        let joins = spaces.get(from).is_some_and(Space::is_terminal)
+            && spaces.get(to).is_some_and(|target| !target.is_terminal());
+        if joins {
+            if self.model.adopt_terminal(from, to) {
+                self.menu = None;
+                self.prompt = None;
+                self.after_model_change(cx);
+            }
+        } else {
+            self.move_space(from, to, cx);
+        }
     }
 
     /// Reorders the spaces.
@@ -159,6 +189,7 @@ impl WorkspaceView {
         let source = self.model.active_space();
         let Some(destination) = self.model.spaces().get(space) else { return };
         if space == self.model.active_index()
+            || destination.is_terminal()
             || tab >= source.tabs().len()
             || source.tabs().len() < 2
         {

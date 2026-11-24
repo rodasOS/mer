@@ -60,6 +60,35 @@ pub fn command_from_title(title: &str) -> Option<&str> {
     Some(line)
 }
 
+/// Prefix of the title the shell integration sends at every prompt
+/// (`ESC ] 2 ; mer:ctx:node=<version>;nvm=<dir>;cwd=<folder> BEL`). Private, never shown.
+pub const CONTEXT_MARKER: &str = "mer:ctx:";
+
+/// What the shell reports at a prompt.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShellReport {
+    /// Active nvm node version (`v24.15.0`); `None` without nvm.
+    pub node: Option<String>,
+    /// Where nvm keeps its versions.
+    pub nvm_dir: Option<std::path::PathBuf>,
+    /// Folder the shell is in.
+    pub cwd: Option<std::path::PathBuf>,
+}
+
+/// The prompt report carried by a shell-integration title, if this is one. The folder comes
+/// last because it is the only field that may contain `;`.
+pub fn context_from_title(title: &str) -> Option<ShellReport> {
+    let rest = title.strip_prefix(CONTEXT_MARKER)?;
+    let (node, rest) = rest.strip_prefix("node=")?.split_once(";nvm=")?;
+    let (nvm_dir, cwd) = rest.split_once(";cwd=")?;
+    let text = |value: &str| Some(value.trim().to_owned()).filter(|value| !value.is_empty());
+    Some(ShellReport {
+        node: text(node).filter(|node| node.starts_with('v')),
+        nvm_dir: text(nvm_dir).map(Into::into),
+        cwd: text(cwd).map(Into::into),
+    })
+}
+
 /// Programs that only host a script: the script is what the user thinks of as "the program".
 fn is_interpreter(name: &str) -> bool {
     matches!(name, "node" | "nodejs" | "bun" | "deno" | "ruby" | "perl" | "php")
@@ -200,5 +229,33 @@ mod tests {
     fn shell_integration_titles_are_recognised() {
         assert_eq!(command_from_title("mer:cmd:ionic serve "), Some("ionic serve"));
         assert_eq!(command_from_title("~/dev · main"), None);
+    }
+
+    #[test]
+    fn a_prompt_report_is_read_back() {
+        let report =
+            context_from_title("mer:ctx:node=v24.15.0;nvm=/home/a/.nvm;cwd=/home/a/dev").unwrap();
+        assert_eq!(report.node.as_deref(), Some("v24.15.0"));
+        assert_eq!(report.nvm_dir, Some("/home/a/.nvm".into()));
+        assert_eq!(report.cwd, Some("/home/a/dev".into()));
+    }
+
+    #[test]
+    fn a_prompt_report_without_nvm_has_no_node() {
+        let report = context_from_title("mer:ctx:node=;nvm=;cwd=/tmp").unwrap();
+        assert_eq!(report, ShellReport { cwd: Some("/tmp".into()), ..ShellReport::default() });
+    }
+
+    #[test]
+    fn a_folder_with_semicolons_survives() {
+        let report = context_from_title("mer:ctx:node=;nvm=;cwd=/tmp/a;b;cwd=c").unwrap();
+        assert_eq!(report.cwd, Some("/tmp/a;b;cwd=c".into()));
+    }
+
+    #[test]
+    fn other_titles_are_not_reports() {
+        assert_eq!(context_from_title("~/dev · main"), None);
+        assert_eq!(context_from_title("mer:cmd:ls"), None);
+        assert_eq!(context_from_title("mer:ctx:garbage"), None);
     }
 }

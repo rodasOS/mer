@@ -79,11 +79,37 @@ El fragmento solo actúa dentro de una terminal de `mer` y no lanza ningún proc
 cada comando manda su texto a `mer` como un título privado (`mer:cmd:…`) que nunca se muestra.
 Es solo para zsh.
 
+La misma integración manda, en cada prompt, la carpeta y la versión de node de nvm (otro título
+privado, `mer:ctx:…`, sin lanzar procesos: se lee `$NVM_BIN`). Con eso `mer` dibuja bajo la
+terminal los chips de **versión de node** y **rama git**. Al pulsar uno se abre una lista con
+buscador; al elegir, `mer` escribe `git switch <rama>` o `nvm use <versión>` en el shell.
+
+Si el proyecto tiene un `.nvmrc` (o `.node-version`), el chip de node lo compara con la versión
+activa: **verde con ✓** si coinciden, **ámbar** (`v24.15.0 → v18.20.4`) si difieren y **rojo** si la
+versión pedida no está instalada (el tooltip dice qué `nvm install` falta). En la lista, la versión
+pedida lleva la etiqueta `.nvmrc` y el cursor empieza en ella. Se lee de forma perezosa: solo
+cuando cambia la carpeta o la rama, en segundo plano, sin ejecutar `nvm` ni `node`, y puede
+apagarse con `terminal.node_version_hint`. Los alias (`lts/*`, `node`) se muestran pero no se
+juzgan, porque solo `nvm` sabe resolverlos.
+
+Eso solo ocurre si el shell está esperando en el prompt **y** no hay otro programa en primer plano:
+si corre un agente, un editor o un servidor, el chip se atenúa y no hace nada, así que `mer` nunca
+manda teclas a un programa en ejecución ni mata ningún proceso. Un servidor que corra en *otra*
+pestaña sobre el mismo repositorio sí verá cambiar los archivos, igual que si cambiaras de rama a
+mano. Los shells que ya estaban abiertos al actualizar `mer` no tienen el hook de prompt hasta
+reiniciarlos. Solo se entiende nvm (no fnm, volta ni asdf).
+
 ## Qué ves
 
-- El **nombre de la pestaña** es el programa que corre (`vite dev`, `claude`), con la carpeta
-  atenuada al lado; si no corre nada, el título del shell. Al pasar el mouse, el tooltip da el
-  comando, la carpeta completa y el título del shell. Un nombre puesto a mano gana siempre.
+- El **nombre de la pestaña** sigue siempre el mismo orden: **1)** el nombre que le pusiste a mano (nada
+  lo reemplaza); **2)** el programa que corre (`vite dev`, `claude`) con la carpeta atenuada al
+  lado, pero solo cuando lleva unos 0,8 s en primer plano, así un `ls` o un `clear` no parpadean en el
+  título; **3)** en reposo, en el prompt, el **nombre de la carpeta** (igual en todas las pestañas);
+  **4)** el título que puso el shell, solo si no se conoce la carpeta; **5)** `shell`. Al volver al
+  prompt el comando se borra al instante (no depende de ningún hook de título tuyo). La ventana usa
+  el mismo nombre que la pestaña. En el sidebar, una terminal suelta muestra ese nombre y debajo la
+  carpeta (`~/dev/mer`) con la rama, sin repetir el título. Al pasar el mouse, el tooltip da el
+  comando, la carpeta completa y el título del shell.
 - Un punto de color junto a la terminal, la pestaña y el espacio: trabajando, esperando o
   terminado.
 - La sección **AGENTS** de la barra lateral, con el estado de cada agente y dónde está.

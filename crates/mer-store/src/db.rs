@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use mer_core::{
-    Accent, AgentMemo, Layout, Pane, PaneId, SpaceData, SpaceId, SpaceState, TabData, TabId,
-    WorkspaceData,
+    Accent, AgentMemo, Layout, Pane, PaneContext, PaneId, SpaceData, SpaceId, SpaceKind,
+    SpaceState, TabData, TabId, WorkspaceData,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use rusqlite_migration::{M, Migrations};
@@ -61,7 +61,13 @@ UPDATE spaces SET color = CASE position % 10
     WHEN 8 THEN 'cyan' ELSE 'lime' END;
 ";
 
-const MIGRATION_LIST: &[M<'static>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2)];
+/// Terminals on their own: a space with a single tab, drawn as a terminal. Every existing row
+/// is a space.
+const SCHEMA_V3: &str = "
+ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space';
+";
+
+const MIGRATION_LIST: &[M<'static>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2), M::up(SCHEMA_V3)];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATION_LIST);
 
 /// The workspace database.
@@ -100,14 +106,15 @@ impl Store {
         tx.execute("DELETE FROM spaces", [])?;
         for (space_position, space) in data.spaces.iter().enumerate() {
             tx.execute(
-                "INSERT INTO spaces (id, position, name, state, active_tab, color) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO spaces (id, position, name, state, active_tab, color, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     space.id.as_uuid().to_string(),
                     int(space_position),
                     space.name,
                     state_name(space.state),
                     int(space.active_tab),
-                    space.color.map(Accent::name)
+                    space.color.map(Accent::name),
+                    kind_name(space.kind)
                 ],
             )?;
             for (tab_position, tab) in space.tabs.iter().enumerate() {
@@ -153,9 +160,9 @@ impl Store {
     /// The stored workspace, or `None` if nothing was saved yet.
     pub fn load(&self) -> Result<Option<WorkspaceData>, StoreError> {
         let mut spaces = Vec::new();
-        let mut space_stmt = self
-            .conn
-            .prepare("SELECT id, name, state, active_tab, color FROM spaces ORDER BY position")?;
+        let mut space_stmt = self.conn.prepare(
+            "SELECT id, name, state, active_tab, color, kind FROM spaces ORDER BY position",
+        )?;
         let space_rows = space_stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -163,10 +170,11 @@ impl Store {
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
         for row in space_rows {
-            let (id, name, state, active_tab, color) = row?;
+            let (id, name, state, active_tab, color, kind) = row?;
             let active_tab = usize::try_from(active_tab)
                 .map_err(|_| StoreError::Corrupt("negative active tab".to_owned()))?;
             spaces.push(SpaceData {
@@ -174,6 +182,7 @@ impl Store {
                 name,
                 state: parse_state(&state)?,
                 color: color.as_deref().and_then(Accent::from_name),
+                kind: parse_kind(&kind)?,
                 active_tab,
                 tabs: self.load_tabs(&id)?,
             });
@@ -245,6 +254,7 @@ impl Store {
                 title,
                 agent: kind.map(|kind| AgentMemo { kind, session_id: session }),
                 program: None,
+                context: PaneContext::default(),
             });
         }
         Ok(panes)
@@ -268,6 +278,21 @@ fn parse_state(name: &str) -> Result<SpaceState, StoreError> {
         "awake" => Ok(SpaceState::Awake),
         "sleeping" => Ok(SpaceState::Sleeping),
         other => Err(StoreError::Corrupt(format!("unknown space state `{other}`"))),
+    }
+}
+
+fn kind_name(kind: SpaceKind) -> &'static str {
+    match kind {
+        SpaceKind::Space => "space",
+        SpaceKind::Terminal => "terminal",
+    }
+}
+
+fn parse_kind(name: &str) -> Result<SpaceKind, StoreError> {
+    match name {
+        "space" => Ok(SpaceKind::Space),
+        "terminal" => Ok(SpaceKind::Terminal),
+        other => Err(StoreError::Corrupt(format!("unknown space kind `{other}`"))),
     }
 }
 
@@ -391,7 +416,7 @@ mod tests {
         let mut store = Store::open(&path).expect("upgrades");
         let version: i64 =
             store.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         let old: i64 = store
             .conn
             .query_row(
@@ -401,8 +426,40 @@ mod tests {
             )
             .expect("row");
         assert_eq!(old, 1, "existing rows are kept and get a color");
+        let kind: String = store
+            .conn
+            .query_row("SELECT kind FROM spaces WHERE name = 'old'", [], |r| r.get(0))
+            .expect("kind");
+        assert_eq!(kind, "space", "everything saved before terminals existed is a space");
 
         store.save(&data).expect("the new schema accepts a full workspace");
         assert_eq!(store.load().expect("loads"), Some(data));
+    }
+    #[test]
+    fn terminals_and_spaces_round_trip_in_order() {
+        let mut ws = rich_workspace();
+        ws.add_terminal(Some(PathBuf::from("/srv")));
+        ws.rename_space(2, "logs".to_owned());
+        ws.add_space(None);
+        let data = ws.to_data();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut store = Store::open(&dir.path().join("terminals.db")).expect("opens");
+        store.save(&data).expect("saves");
+        let loaded = store.load().expect("loads").expect("something was saved");
+        assert_eq!(loaded, data);
+        let kinds: Vec<_> = loaded.spaces.iter().map(|space| space.kind).collect();
+        assert_eq!(
+            kinds,
+            [SpaceKind::Space, SpaceKind::Space, SpaceKind::Terminal, SpaceKind::Space]
+        );
+    }
+
+    #[test]
+    fn an_unknown_kind_is_reported_as_corrupt_data() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut store = Store::open(&dir.path().join("kind.db")).expect("opens");
+        store.save(&rich_workspace().to_data()).expect("saves");
+        store.conn.execute("UPDATE spaces SET kind = 'folder'", []).expect("edit");
+        assert!(matches!(store.load(), Err(StoreError::Corrupt(_))));
     }
 }

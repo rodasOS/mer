@@ -1,10 +1,12 @@
 //! The main window content: sidebar of spaces, tab strip, split panes and the prompt overlay.
 
 mod agents;
+mod context;
 mod context_menu;
 mod dialog;
 mod drag;
 mod settings_panel;
+mod sidebar;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -13,17 +15,19 @@ use std::time::{Duration, Instant};
 use futures::StreamExt as _;
 use gpui::{
     AnyElement, App, AppContext as _, BorrowAppContext as _, ClickEvent, Context, Entity,
-    FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Window, WindowBounds, div, hsla, prelude::FluentBuilder as _, px, relative,
+    FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
+    WindowBounds, div, hsla, prelude::FluentBuilder as _, px, relative,
 };
 use mer_core::{
-    Accent, Axis, CloseOutcome, Direction, Layout, PaneId, Program, SpaceId, SpaceState, Workspace,
+    Accent, Axis, CloseOutcome, Direction, Layout, PaneContext, PaneId, Program, SpaceId,
+    SpaceState, Workspace,
 };
 use mer_store::{Scrollback, StateDir, Store, UiState, WindowMode, WindowState, Writer};
 use mer_term::snapshot::RESTORED_MARK;
 
 use self::agents::{AgentInfo, status_color};
+use self::context::Picker;
 use self::context_menu::{ContextMenu, MenuTarget};
 use self::settings_panel::SettingsState;
 use crate::RunOptions;
@@ -40,11 +44,20 @@ const SIDEBAR_WIDTH: f32 = 220.0;
 const SIDEBAR_MIN: f32 = 160.0;
 const SIDEBAR_MAX: f32 = 480.0;
 const SIDEBAR_FOLD: f32 = 110.0;
-const RAIL_WIDTH: f32 = 52.0;
 /// How often a window resize is written to disk while it is being dragged.
 const UI_SAVE_INTERVAL: Duration = Duration::from_millis(400);
 const RESIZE_STEP: f32 = 0.03;
 const PALETTE_ROWS: usize = 10;
+/// Windows narrower than this (in unscaled pixels) get the compact layouts: the settings
+/// navigation becomes a strip on top and each setting stacks its control under its label.
+const NARROW_BELOW: f32 = 720.0;
+
+impl WorkspaceView {
+    /// Is the window too narrow for side-by-side layouts?
+    fn is_narrow(&self) -> bool {
+        self.window_width < NARROW_BELOW * self.ui_scale
+    }
+}
 
 struct LivePane {
     view: Entity<TerminalView>,
@@ -150,6 +163,7 @@ enum Focus {
     Terminal,
     Prompt,
     Menu,
+    Picker,
 }
 
 pub struct WorkspaceView {
@@ -166,6 +180,9 @@ pub struct WorkspaceView {
     resizing_sidebar: Option<bool>,
     menu: Option<ContextMenu>,
     menu_focus: FocusHandle,
+    /// The branch / node version list opened from a chip under a terminal.
+    picker: Option<Picker>,
+    picker_focus: FocusHandle,
     /// Last window size seen, saved with the interface state.
     window_state: Option<WindowState>,
     last_ui_save: Instant,
@@ -178,6 +195,8 @@ pub struct WorkspaceView {
     window_title: String,
     /// Scale of the interface, refreshed from the config on every frame.
     ui_scale: f32,
+    /// Width of the window in pixels, refreshed every frame, for the compact layouts.
+    window_width: f32,
     /// Side of the window the sidebar is on, refreshed from the config on every frame.
     sidebar_side: mer_config::SidebarSide,
     persistence: Option<Persistence>,
@@ -329,6 +348,8 @@ impl WorkspaceView {
             resizing_sidebar: None,
             menu: None,
             menu_focus: cx.focus_handle(),
+            picker: None,
+            picker_focus: cx.focus_handle(),
             window_state: ui.window,
             last_ui_save: Instant::now(),
             window: None,
@@ -337,6 +358,7 @@ impl WorkspaceView {
             want_focus: None,
             window_title: String::new(),
             ui_scale: 1.0,
+            window_width: f32::MAX,
             sidebar_side: mer_config::SidebarSide::default(),
             persistence,
             settings: SettingsState::default(),
@@ -627,7 +649,7 @@ impl WorkspaceView {
     /// Asks before deleting a space: it cannot be undone.
     fn request_delete_space(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(space) = self.model.spaces().get(index) else { return };
-        let (name, terminals) = (space.name.clone(), space.pane_count());
+        let (name, terminals) = (space.display_name().to_owned(), space.pane_count());
         let busy = self.busy_in_space(index, cx);
         self.open_prompt(
             PromptKind::ConfirmDeleteSpace { index, name, terminals, busy },
@@ -723,6 +745,13 @@ impl WorkspaceView {
             // Sleeping or closing a pane is not a command that finished.
             self.command_started.remove(&id);
             self.model.set_pane_program(id, None);
+            // A shell that wakes up is a new one: it is not at a prompt until it says so, and the
+            // folder and branch it had are not known any more.
+            self.model.set_pane_context(id, PaneContext::default());
+            // A picker over a terminal that is gone would list stale items.
+            if self.picker.as_ref().is_some_and(|picker| picker.pane() == id) {
+                self.picker = None;
+            }
             if !known.contains(&id)
                 && let Some(persistence) = &self.persistence
             {
@@ -805,9 +834,15 @@ impl WorkspaceView {
     /// stays with the pane; a program's title belongs to that program, so it does not hide
     /// what is running once the shell takes over again.
     fn on_title(&mut self, id: PaneId, title: &str, cx: &mut Context<Self>) {
+        // Sent by the shell integration at every prompt: private, never a title.
+        if let Some(report) = mer_agents::context_from_title(title) {
+            self.on_prompt_report(id, report, cx);
+            return;
+        }
         let current = self.model.pane(id).and_then(|pane| pane.program.clone());
         let changed = if let Some(command) = mer_agents::command_from_title(title) {
             // Sent by the shell integration right before it runs a command.
+            self.context_busy(id, cx);
             let program = Program {
                 command: Some(command.to_owned()).filter(|line| !line.is_empty()),
                 ..Program::default()
@@ -820,6 +855,7 @@ impl WorkspaceView {
                 label: mer_agents::program_label(&process.comm, &process.cmdline),
                 command: current.and_then(|program| program.command),
                 title: Some(title.to_owned()).filter(|title| !title.is_empty()),
+                visible: false,
             };
             self.set_program(id, Some(program), cx)
         } else {
@@ -875,6 +911,10 @@ impl WorkspaceView {
                 let cwd = self.focused_cwd(cx);
                 self.model.add_space(cwd);
             }
+            Cmd::NewTerminal => {
+                let cwd = self.focused_cwd(cx);
+                self.model.add_terminal(cwd);
+            }
             Cmd::ClosePane => {
                 let id = self.model.focused_pane();
                 if self.model.close_pane(id) == CloseOutcome::WorkspaceEmpty {
@@ -895,7 +935,7 @@ impl WorkspaceView {
             }
             Cmd::RenameSpace => {
                 let index = self.model.active_index();
-                let name = self.model.active_space().name.clone();
+                let name = self.model.active_space().editable_name();
                 self.open_prompt(PromptKind::RenameSpace(index), name, cx);
                 return;
             }
@@ -975,6 +1015,12 @@ impl WorkspaceView {
             Cmd::ZoomReset => return self.zoom(Zoom::Reset, cx),
             Cmd::SearchTerminal => {
                 self.toggle_search(cx);
+                return;
+            }
+            Cmd::ScrollToBottom => {
+                if let Some(live) = self.live.get(&self.model.focused_pane()) {
+                    live.view.update(cx, TerminalView::scroll_to_bottom);
+                }
                 return;
             }
             Cmd::MoveTabLeft => {
@@ -1134,35 +1180,6 @@ impl WorkspaceView {
 
     // ----- rendering -----
 
-    /// A small square button of the sidebar or rail.
-    fn chrome_button(
-        &self,
-        id: &'static str,
-        glyph: &'static str,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let chrome = &self.palette.chrome;
-        let (text, dim) = (chrome.text, chrome.text_dim);
-        let hover = self.palette.hover();
-        div()
-            .id(id)
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(self.ui_px(28.0))
-            .flex_none()
-            .rounded_lg()
-            .cursor_pointer()
-            .text_color(dim)
-            .hover(move |button| button.bg(hover).text_color(text))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                on_click(this, cx);
-            }))
-            .child(glyph)
-            .into_any_element()
-    }
-
     fn space_color(&self, color: Option<Accent>) -> Hsla {
         color.map_or(self.palette.chrome.text_dim, accent_color)
     }
@@ -1189,6 +1206,16 @@ impl WorkspaceView {
         lines
     }
 
+    /// The secondary line of a terminal: its folder (`~/dev/mer`) and, when known, the git branch.
+    /// Never repeats the title, which is the folder's name or the program running.
+    fn place_line(pane: &mer_core::Pane) -> Option<String> {
+        let path = Self::shorten_home(&pane.folder_path()?.to_string_lossy());
+        Some(match pane.context.branch.as_deref() {
+            Some(branch) => format!("{path} · {branch}"),
+            None => path,
+        })
+    }
+
     /// `/home/user/x` as `~/x`.
     fn shorten_home(text: &str) -> String {
         static HOME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
@@ -1205,354 +1232,11 @@ impl WorkspaceView {
     }
 
     #[allow(clippy::too_many_lines)] // builder chain
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.sidebar_collapsed {
-            return self.render_rail(cx);
-        }
-        let palette = &self.palette;
-        let chrome = &palette.chrome;
-        let (text, dim) = (chrome.text, chrome.text_dim);
-        let (hover, hairline) = (palette.hover(), palette.hairline());
-        let active = self.model.active_index();
-        let clear = hsla(0.0, 0.0, 0.0, 0.0);
-
-        let rows = self
-            .model
-            .spaces()
-            .iter()
-            .enumerate()
-            .map(|(index, space)| {
-                let is_active = index == active;
-                let sleeping = space.state == SpaceState::Sleeping;
-                let terminals = space.pane_count();
-                let color = self.space_color(space.color);
-                let agent_color = self
-                    .space_agent_status(index)
-                    .map(|status| status_color(&self.palette, status));
-                let detail = format!(
-                    "{terminals} terminal{}{}",
-                    if terminals == 1 { "" } else { "s" },
-                    if sleeping { " · sleeping" } else { "" }
-                );
-                self.space_dnd(div().id(("space", index)), index, &space.name, cx)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(self.ui_px(8.0))
-                    .h(self.ui_px(34.0))
-                    .px(self.ui_px(8.0))
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(if is_active { with_alpha(color, 0.35) } else { clear })
-                    .cursor_pointer()
-                    .when(is_active, move |row| row.bg(with_alpha(color, 0.16)))
-                    .hover(move |row| {
-                        row.bg(with_alpha(color, if is_active { 0.22 } else { 0.10 }))
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.select_space(index, cx);
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                            cx.stop_propagation();
-                            this.open_menu(MenuTarget::Space(index), event.position, cx);
-                        }),
-                    )
-                    .tooltip(tooltip::tip(palette, space.name.clone(), [detail]))
-                    .tooltip_show_delay(tooltip::SHOW_DELAY)
-                    .child(
-                        div()
-                            .w(self.ui_px(3.0))
-                            .h(self.ui_px(16.0))
-                            .flex_none()
-                            .rounded_full()
-                            .bg(color)
-                            .when(sleeping, |bar| bar.opacity(0.6)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if is_active { text } else { dim })
-                            .when(is_active, |name| name.font_weight(FontWeight::SEMIBOLD))
-                            .when(sleeping, |name| name.opacity(0.75))
-                            .child(SharedString::from(space.name.clone())),
-                    )
-                    .children(agent_color.map(|status| {
-                        div().size(self.ui_px(8.0)).flex_none().rounded_full().bg(status)
-                    }))
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .h(self.ui_px(18.0))
-                            .px(self.ui_px(6.0))
-                            .rounded_full()
-                            .bg(hover)
-                            .text_xs()
-                            .text_color(dim)
-                            .child(if sleeping {
-                                format!("zz {terminals}")
-                            } else {
-                                format!("{terminals}")
-                            }),
-                    )
-            })
-            .collect::<Vec<_>>();
-
-        div()
-            .relative()
-            .w(self.ui_px(self.sidebar_width))
-            .h_full()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .py_3()
-            .bg(chrome.sidebar)
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                    this.open_menu(MenuTarget::Sidebar, event.position, cx);
-                }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .pl_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(dim)
-                            .child("SPACES"),
-                    )
-                    .child(self.chrome_button(
-                        "collapse-sidebar",
-                        self.sidebar_side.chevron(true),
-                        |this, cx| this.set_sidebar_collapsed(true, cx),
-                        cx,
-                    )),
-            )
-            .children(rows)
-            .child(
-                div()
-                    .id("new-space")
-                    .flex()
-                    .items_center()
-                    .h(self.ui_px(32.0))
-                    .px_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(hairline)
-                    .cursor_pointer()
-                    .text_color(dim)
-                    .hover(move |row| row.bg(hover).text_color(text))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.run(Cmd::NewSpace, cx);
-                    }))
-                    .child("+  New space"),
-            )
-            .children(self.render_agents_section(cx))
-            .child(div().flex_1())
-            .child(
-                div()
-                    .id("open-settings")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .h(self.ui_px(34.0))
-                    .px_2()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .text_color(dim)
-                    .hover(move |row| row.bg(hover).text_color(text))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.open_settings(cx);
-                    }))
-                    .child("⚙  Settings")
-                    .child(tooltip::kbd(palette, "Ctrl+,")),
-            )
-            .child(self.render_sidebar_handle(cx))
-            .into_any_element()
-    }
-
-    /// The strip on the sidebar's right edge that is dragged to change its width. Double click
-    /// brings the width back to the default.
-    fn render_sidebar_handle(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (hairline, accent) = (self.palette.hairline(), self.palette.chrome.accent);
-        let dragging = self.resizing_sidebar.is_some();
-        // The handle is on the edge that faces the terminals.
-        let on_right_edge = self.sidebar_side.sidebar_first();
-        div()
-            .id("sidebar-handle")
-            .group("sidebar-handle")
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .when(on_right_edge, Styled::right_0)
-            .when(!on_right_edge, Styled::left_0)
-            .w(self.ui_px(6.0))
-            .flex()
-            .when(on_right_edge, Styled::justify_end)
-            .cursor_col_resize()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, _window, cx| {
-                    cx.stop_propagation();
-                    this.resizing_sidebar = Some(false);
-                    cx.notify();
-                }),
-            )
-            .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
-                if event.click_count() == 2 {
-                    this.set_sidebar_width(SIDEBAR_WIDTH, cx);
-                }
-            }))
-            .child(
-                div()
-                    .w(px(2.0))
-                    .h_full()
-                    .rounded_full()
-                    .bg(if dragging { accent } else { gpui::hsla(0.0, 0.0, 0.0, 0.0) })
-                    .group_hover("sidebar-handle", move |bar| {
-                        bar.bg(if dragging { accent } else { hairline })
-                    }),
-            )
-            .into_any_element()
-    }
-
-    /// The collapsed sidebar: one colored pill per space.
-    #[allow(clippy::too_many_lines)] // builder chain
-    fn render_rail(&self, cx: &mut Context<Self>) -> AnyElement {
-        let palette = &self.palette;
-        let chrome = &palette.chrome;
-        let (text, dim) = (chrome.text, chrome.text_dim);
-        let active = self.model.active_index();
-
-        let pills = self
-            .model
-            .spaces()
-            .iter()
-            .enumerate()
-            .map(|(index, space)| {
-                let is_active = index == active;
-                let sleeping = space.state == SpaceState::Sleeping;
-                let color = self.space_color(space.color);
-                let agent_status = self.space_agent_status(index);
-                let label = match space.name.strip_prefix("Space ") {
-                    Some(rest) if !rest.is_empty() => rest.to_owned(),
-                    _ => space.name.chars().next().map_or_else(
-                        || "?".to_owned(),
-                        |initial| initial.to_uppercase().collect::<String>(),
-                    ),
-                };
-                self.space_dnd(div().id(("space-pill", index)), index, &space.name, cx)
-                    .relative()
-                    .size(self.ui_px(36.0))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_xl()
-                    .cursor_pointer()
-                    .text_color(if is_active { text } else { dim })
-                    .bg(with_alpha(color, if is_active { 0.40 } else { 0.20 }))
-                    .hover(move |pill| pill.bg(with_alpha(color, 0.45)))
-                    .when(sleeping, |pill| pill.opacity(0.8))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.select_space(index, cx);
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                            cx.stop_propagation();
-                            this.open_menu(MenuTarget::Space(index), event.position, cx);
-                        }),
-                    )
-                    .tooltip(tooltip::tip(palette, space.name.clone(), []))
-                    .tooltip_show_delay(tooltip::SHOW_DELAY)
-                    .child(SharedString::from(label))
-                    // The active space has a marker on the rail's edge.
-                    .when(is_active, |pill| {
-                        pill.child(
-                            div()
-                                .absolute()
-                                // On the rail's edge that faces the window's edge.
-                                .when(self.sidebar_side.sidebar_first(), |bar| {
-                                    bar.left(self.ui_px(-8.0))
-                                })
-                                .when(!self.sidebar_side.sidebar_first(), |bar| {
-                                    bar.right(self.ui_px(-8.0))
-                                })
-                                .top(self.ui_px(9.0))
-                                .w(self.ui_px(3.0))
-                                .h(self.ui_px(18.0))
-                                .rounded_full()
-                                .bg(color),
-                        )
-                    })
-                    .children(agent_status.map(|status| {
-                        // A ring, bigger than the dot, for an agent that needs you.
-                        let urgent = status == mer_agents::AgentStatus::Waiting;
-                        let hue = status_color(&self.palette, status);
-                        div()
-                            .absolute()
-                            .top(px(1.0))
-                            .right(px(1.0))
-                            .size(self.ui_px(if urgent { 12.0 } else { 8.0 }))
-                            .rounded_full()
-                            .bg(if urgent { with_alpha(hue, 0.35) } else { hue })
-                            .when(urgent, |dot| dot.border_2().border_color(hue))
-                    }))
-            })
-            .collect::<Vec<_>>();
-
-        div()
-            .w(self.ui_px(RAIL_WIDTH))
-            .h_full()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_1()
-            .py_3()
-            .bg(chrome.sidebar)
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                    this.open_menu(MenuTarget::Sidebar, event.position, cx);
-                }),
-            )
-            .child(self.chrome_button(
-                "expand-sidebar",
-                self.sidebar_side.chevron(false),
-                |this, cx| this.set_sidebar_collapsed(false, cx),
-                cx,
-            ))
-            .children(pills)
-            .child(self.chrome_button(
-                "rail-new-space",
-                "+",
-                |this, cx| this.run(Cmd::NewSpace, cx),
-                cx,
-            ))
-            .child(div().flex_1())
-            .child(self.chrome_button("rail-settings", "⚙", Self::open_settings, cx))
-            .into_any_element()
-    }
-
-    #[allow(clippy::too_many_lines)] // builder chain
-    fn render_tab_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The bar under the window's title: a space's tabs. `None` for a terminal on its own while the
+    /// sidebar is visible: it has no tabs, its name and folder are in the sidebar row, and the
+    /// terminal gets the room. With the sidebar hidden a slim strip stays, holding the button that
+    /// brings it back, so there is always a way to show it.
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let palette = &self.palette;
         let chrome = &palette.chrome;
         let (text, dim) = (chrome.text, chrome.text_dim);
@@ -1563,9 +1247,40 @@ impl WorkspaceView {
         let space_color = space.color.map(accent_color);
         // A tab can go to another space as long as this one keeps another tab.
         let movable = space.tabs().len() > 1;
+        // A terminal on its own has no tabs.
+        let terminal = space.is_terminal();
+        let hidden = self.sidebar_collapsed;
+        if terminal && !hidden {
+            return None;
+        }
+
+        // With the sidebar visible its own header holds the toggle; hidden, this bar does, at the
+        // end that is on the sidebar's side of the window.
+        let toggle = hidden.then(|| self.render_sidebar_toggle(cx));
+        let (leading, trailing) =
+            if self.sidebar_side.sidebar_first() { (toggle, None) } else { (None, toggle) };
+
+        // A new tab only makes sense in a space; a terminal on its own is made from the sidebar.
+        let new_tab = (!terminal).then(|| {
+            div()
+                .id("new-tab")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(self.ui_px(28.0))
+                .flex_none()
+                .rounded_lg()
+                .cursor_pointer()
+                .text_color(dim)
+                .hover(move |button| button.bg(hover).text_color(text))
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.run(Cmd::NewTab, cx);
+                }))
+                .child("+")
+        });
 
         let tabs =
-            space.tabs().iter().enumerate().map(|(index, tab)| {
+            space.tabs().iter().enumerate().filter(|_| !terminal).map(|(index, tab)| {
                 let is_active = index == active;
                 let sleeping = tab.sleeping;
                 let color = tab.color.map(accent_color);
@@ -1669,42 +1384,59 @@ impl WorkspaceView {
                     }))
             });
 
-        div()
-            .w_full()
-            .h(self.ui_px(44.0))
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_2()
-            .bg(chrome.sidebar)
-            .children(tabs)
-            .child(
-                div()
-                    .id("new-tab")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(self.ui_px(28.0))
-                    .flex_none()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .text_color(dim)
-                    .hover(move |button| button.bg(hover).text_color(text))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.run(Cmd::NewTab, cx);
-                    }))
-                    .child("+"),
-            )
-            // Free space to the right: dropping a tab here sends it to the end.
-            .child(div().flex_1().h_full().on_drop::<drag::DraggedTab>(cx.listener(
-                |this, dragged: &drag::DraggedTab, _, cx| {
-                    let last = this.model.active_space().tabs().len().saturating_sub(1);
-                    this.move_tab(dragged.index, last, cx);
-                },
-            )))
-            .into_any_element()
+        // What the bar says for a terminal on its own: what runs, and the folder beside it.
+        let heading = terminal.then(|| {
+            let tab = space.active_tab();
+            let place = tab.pane(tab.focused()).and_then(Self::place_line);
+            div()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(self.ui_px(8.0))
+                .px_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(text)
+                        .child(SharedString::from(space.display_name().to_owned())),
+                )
+                .children(place.map(|place| {
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .text_color(dim)
+                        .child(SharedString::from(tooltip::ellipsize_middle(&place, 48)))
+                }))
+        });
+
+        Some(
+            div()
+                .w_full()
+                .h(self.ui_px(if terminal { 28.0 } else { 44.0 }))
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .bg(chrome.sidebar)
+                .children(leading)
+                .children(heading)
+                .children(tabs)
+                .children(new_tab)
+                // Free space to the right: dropping a tab here sends it to the end.
+                .child(div().flex_1().h_full().on_drop::<drag::DraggedTab>(cx.listener(
+                    |this, dragged: &drag::DraggedTab, _, cx| {
+                        let last = this.model.active_space().tabs().len().saturating_sub(1);
+                        this.move_tab(dragged.index, last, cx);
+                    },
+                )))
+                .children(trailing)
+                .into_any_element(),
+        )
     }
 
     fn render_layout(
@@ -1752,6 +1484,7 @@ impl WorkspaceView {
         } else {
             self.palette.hairline()
         };
+        let strip = self.render_context_strip(id, cx);
         div()
             .size_full()
             .overflow_hidden()
@@ -1759,13 +1492,16 @@ impl WorkspaceView {
             .border_1()
             .border_color(border)
             .bg(self.palette.background)
+            .flex()
+            .flex_col()
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, _window, cx| {
                     this.focus_pane(id, cx);
                 }),
             )
-            .child(live.view.clone())
+            .child(div().flex_1().min_h_0().child(live.view.clone()))
+            .children(strip)
             .into_any_element()
     }
 }
@@ -1796,12 +1532,10 @@ impl Render for WorkspaceView {
         self.sidebar_side = cx.global::<AppSettings>().config.appearance.sidebar_side;
         // `rem`-based sizes (text_xs, p_2, rounded_lg...) follow the scale on their own.
         window.set_rem_size(px(16.0 * self.ui_scale));
+        self.window_width = f32::from(window.viewport_size().width);
         let title = {
-            let tab = self.model.active_tab();
-            let pane_title = tab.pane(tab.focused()).map_or("", |pane| {
-                pane.program.as_ref().and_then(Program::name).unwrap_or(pane.title.as_str())
-            });
-            if pane_title.is_empty() { "mer".to_owned() } else { format!("{pane_title} — mer") }
+            // The same name the tab has, so the two never disagree.
+            format!("{} — mer", self.model.active_tab().display_title())
         };
         if title != self.window_title {
             window.set_window_title(&title);
@@ -1817,6 +1551,7 @@ impl Render for WorkspaceView {
                     .map(|live| live.view.read(cx).focus_handle()),
                 Focus::Prompt => Some(self.prompt_focus.clone()),
                 Focus::Menu => Some(self.menu_focus.clone()),
+                Focus::Picker => Some(self.picker_focus.clone()),
             };
             if let Some(handle) = handle {
                 window.defer(cx, move |window, cx| window.focus(&handle, cx));
@@ -1831,6 +1566,7 @@ impl Render for WorkspaceView {
         let prompt = self.render_prompt(cx);
         let settings_overlay = self.render_settings(cx);
         let menu = self.render_menu(cx);
+        let picker = self.render_picker(cx);
         let chrome = &self.palette.chrome;
 
         let main = div()
@@ -1839,7 +1575,7 @@ impl Render for WorkspaceView {
             .h_full()
             .flex()
             .flex_col()
-            .child(tab_bar)
+            .children(tab_bar)
             .child(
                 div()
                     .flex_1()
@@ -1851,8 +1587,11 @@ impl Render for WorkspaceView {
             )
             .into_any_element();
         // The sidebar goes on the side the config says; both share the window's background.
-        let (first, second) =
-            if self.sidebar_side.sidebar_first() { (sidebar, main) } else { (main, sidebar) };
+        let (first, second) = if self.sidebar_side.sidebar_first() {
+            (sidebar, Some(main))
+        } else {
+            (Some(main), sidebar)
+        };
 
         let root = div()
             .id("mer")
@@ -1887,6 +1626,7 @@ impl Render for WorkspaceView {
             SplitRight => Cmd::SplitRight,
             SplitDown => Cmd::SplitDown,
             NewSpace => Cmd::NewSpace,
+            NewTerminal => Cmd::NewTerminal,
             CloseSpace => Cmd::CloseSpace,
             RenameSpace => Cmd::RenameSpace,
             RenameTab => Cmd::RenameTab,
@@ -1916,16 +1656,18 @@ impl Render for WorkspaceView {
             MoveSpaceUp => Cmd::MoveSpaceUp,
             MoveSpaceDown => Cmd::MoveSpaceDown,
             SearchTerminal => Cmd::SearchTerminal,
+            ScrollToBottom => Cmd::ScrollToBottom,
             Quit => Cmd::Quit,
             OpenPalette => Cmd::OpenPalette,
             OpenSettings => Cmd::OpenSettings,
             SleepSpace => Cmd::SleepSpace,
             SleepOthers => Cmd::SleepOthers,
         })
-        .child(first)
-        .child(second)
+        .children(first)
+        .children(second)
         .children(settings_overlay)
         .children(prompt)
         .children(menu)
+        .children(picker)
     }
 }

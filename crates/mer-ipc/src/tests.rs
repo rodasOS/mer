@@ -44,6 +44,7 @@ fn every_request_and_response_round_trips() {
         },
         Request::Ctl(CtlCommand::SpaceList),
         Request::Ctl(CtlCommand::SpaceNew { cwd: Some("/tmp".into()) }),
+        Request::Ctl(CtlCommand::TerminalNew { cwd: None }),
         Request::Ctl(CtlCommand::SpaceSleep { index: None }),
         Request::Ctl(CtlCommand::SpaceWake { index: 2 }),
         Request::Ctl(CtlCommand::Open { dir: "/x".into() }),
@@ -69,8 +70,14 @@ fn every_request_and_response_round_trips() {
         assert!(line.starts_with(r#"{"v":1,"#));
         assert_eq!(protocol::decode_request(&line), Ok(request));
     }
-    let info =
-        SpaceInfo { index: 0, name: "a".into(), state: "awake".into(), panes: 2, active: true };
+    let info = SpaceInfo {
+        index: 0,
+        name: "a".into(),
+        kind: "terminal".into(),
+        state: "awake".into(),
+        panes: 2,
+        active: true,
+    };
     for response in
         [Response::Ok, Response::Pong, Response::Spaces(vec![info]), Response::Error("x".into())]
     {
@@ -201,4 +208,14 @@ fn malformed_input_does_not_kill_the_server() {
     assert!(raw(&path, "{\"v\":1,\"request\":\"Nope\"}\n").contains("Error"));
     assert!(raw(&path, "\n").contains("Error"));
     assert!(Client::is_running(&path));
+}
+
+#[test]
+fn a_space_list_from_an_older_instance_still_reads() {
+    // Before terminals existed the rows had no `kind`.
+    let line = r#"{"v":1,"response":{"Spaces":[{"index":0,"name":"a","state":"awake","panes":1,"active":true}]}}"#;
+    let Response::Spaces(rows) = protocol::decode_response(line).unwrap() else {
+        panic!("not a space list");
+    };
+    assert_eq!(rows[0].kind, "");
 }

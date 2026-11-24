@@ -38,6 +38,10 @@ pub enum CtlCommand {
     SpaceNew {
         cwd: Option<String>,
     },
+    /// Create a terminal on its own, outside any space.
+    TerminalNew {
+        cwd: Option<String>,
+    },
     SpaceSleep {
         index: Option<usize>,
     },
@@ -118,7 +122,11 @@ pub enum CtlCommand {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SpaceInfo {
     pub index: usize,
+    /// A space's name, or what a terminal is running.
     pub name: String,
+    /// `"space"` or `"terminal"`. Empty when an older instance answered: that means a space.
+    #[serde(default)]
+    pub kind: String,
     /// `"awake"` or `"sleeping"`.
     pub state: String,
     pub panes: usize,

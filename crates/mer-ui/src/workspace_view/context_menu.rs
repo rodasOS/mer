@@ -9,7 +9,7 @@ use gpui::{
     MouseDownEvent, ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled,
     anchored, div, hsla, prelude::FluentBuilder as _, px,
 };
-use mer_core::{Accent, Axis, PaneId, SpaceState};
+use mer_core::{Accent, Axis, PaneId, Space, SpaceState};
 
 use super::{PromptKind, WorkspaceView};
 use crate::commands::Cmd;
@@ -53,6 +53,11 @@ pub(super) enum MenuAction {
     Paste(PaneId),
     ClosePane(PaneId),
     NewSpace,
+    NewTerminal,
+    /// Turn a terminal into a space, so it can have tabs.
+    PromoteToSpace(usize),
+    /// Take a tab of the active space out, as a terminal on its own.
+    DetachTab(usize),
     OpenSettings,
     ToggleSidebar,
     Quit,
@@ -112,6 +117,48 @@ impl WorkspaceView {
                 let sleeping = space.state == SpaceState::Sleeping;
                 let awake =
                     self.model.spaces().iter().filter(|s| s.state == SpaceState::Awake).count();
+                if space.is_terminal() {
+                    return vec![
+                        item("Rename…", "", MenuAction::RenameSpace(index)),
+                        if sleeping {
+                            item("Wake terminal", "", MenuAction::WakeSpace(index))
+                        } else {
+                            item_if(
+                                awake > 1,
+                                "Sleep terminal",
+                                "Ctrl+Shift+Z",
+                                MenuAction::SleepSpace(index),
+                            )
+                        },
+                        MenuEntry::Separator,
+                        item(
+                            "Split right",
+                            "Ctrl+Shift+D",
+                            MenuAction::PaneSplit(space.active_tab().focused(), Axis::Row),
+                        ),
+                        item(
+                            "Split down",
+                            "Ctrl+Shift+E",
+                            MenuAction::PaneSplit(space.active_tab().focused(), Axis::Column),
+                        ),
+                        MenuEntry::Separator,
+                        item("Turn into space", "", MenuAction::PromoteToSpace(index)),
+                        item_if(
+                            index > 0,
+                            "Move up",
+                            "",
+                            MenuAction::MoveSpace(index, index.saturating_sub(1)),
+                        ),
+                        item_if(
+                            index + 1 < self.model.spaces().len(),
+                            "Move down",
+                            "",
+                            MenuAction::MoveSpace(index, index + 1),
+                        ),
+                        MenuEntry::Separator,
+                        danger("Delete terminal…", "", MenuAction::DeleteSpace(index)),
+                    ];
+                }
                 vec![
                     item("Rename…", "", MenuAction::RenameSpace(index)),
                     MenuEntry::Colors { target: ColorTarget::Space(index), current: space.color },
@@ -160,6 +207,7 @@ impl WorkspaceView {
                     },
                     item("Split right", "Ctrl+Shift+D", MenuAction::TabSplit(index, Axis::Row)),
                     item("Split down", "Ctrl+Shift+E", MenuAction::TabSplit(index, Axis::Column)),
+                    item_if(tabs > 1, "Open as terminal", "", MenuAction::DetachTab(index)),
                     MenuEntry::Separator,
                     item_if(
                         index > 0,
@@ -178,7 +226,8 @@ impl WorkspaceView {
                 if tabs > 1 {
                     let active = self.model.active_index();
                     for (other, target) in self.model.spaces().iter().enumerate().take(8) {
-                        if other != active {
+                        // A terminal has exactly one tab, so it cannot take another.
+                        if other != active && !target.is_terminal() {
                             entries.push(item(
                                 &format!("Move to “{}”", target.name),
                                 "",
@@ -201,11 +250,12 @@ impl WorkspaceView {
                 danger("Close pane", "Ctrl+Shift+W", MenuAction::ClosePane(id)),
             ],
             MenuTarget::Sidebar => vec![
+                item("New terminal", "", MenuAction::NewTerminal),
                 item("New space", "Ctrl+Shift+N", MenuAction::NewSpace),
                 item("Settings", "Ctrl+,", MenuAction::OpenSettings),
                 MenuEntry::Separator,
                 item(
-                    if self.sidebar_collapsed { "Expand sidebar" } else { "Collapse sidebar" },
+                    if self.sidebar_collapsed { "Show sidebar" } else { "Hide sidebar" },
                     "Ctrl+Shift+B",
                     MenuAction::ToggleSidebar,
                 ),
@@ -221,7 +271,7 @@ impl WorkspaceView {
         cx.notify();
         match action {
             MenuAction::RenameSpace(index) => {
-                let name = self.model.spaces().get(index).map(|s| s.name.clone());
+                let name = self.model.spaces().get(index).map(Space::editable_name);
                 if let Some(name) = name {
                     self.open_prompt(PromptKind::RenameSpace(index), name, cx);
                 }
@@ -287,6 +337,17 @@ impl WorkspaceView {
                 self.run(Cmd::ClosePane, cx);
             }
             MenuAction::NewSpace => self.run(Cmd::NewSpace, cx),
+            MenuAction::NewTerminal => self.run(Cmd::NewTerminal, cx),
+            MenuAction::PromoteToSpace(index) => {
+                if self.model.promote_to_space(index) {
+                    self.after_model_change(cx);
+                }
+            }
+            MenuAction::DetachTab(index) => {
+                if self.model.detach_tab(index) {
+                    self.after_model_change(cx);
+                }
+            }
             MenuAction::OpenSettings => self.open_settings(cx),
             MenuAction::ToggleSidebar => self.run(Cmd::ToggleSidebar, cx),
             MenuAction::Quit => self.run(Cmd::Quit, cx),
