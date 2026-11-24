@@ -346,6 +346,32 @@ impl WorkspaceView {
                     .text_color(dim)
                     .child("zz")
             }))
+            // A quiet ×: always there, brighter on the open row and when pointed at.
+            .child(
+                div()
+                    .id(("terminal-close", index))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(self.ui_px(20.0))
+                    .rounded_full()
+                    .text_color(dim)
+                    .opacity(if is_active { 0.7 } else { 0.4 })
+                    .cursor_pointer()
+                    .hover(move |close| close.opacity(1.0).bg(hover).text_color(text))
+                    .tooltip(tooltip::tip(
+                        palette,
+                        "Close terminal".to_owned(),
+                        Vec::<String>::new(),
+                    ))
+                    .tooltip_show_delay(tooltip::SHOW_DELAY)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        cx.stop_propagation();
+                        this.close_terminal(index, cx);
+                    }))
+                    .child("×"),
+            )
             .into_any_element()
     }
 

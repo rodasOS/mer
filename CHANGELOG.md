@@ -6,6 +6,8 @@ usa versionado semántico mientras no llegue a 1.0, las versiones `0.x` pueden c
 ## [Sin publicar]
 
 ### Añadido
+- **× en cada terminal suelta del sidebar**: sutil (tenue, más visible en la fila activa y al pasar
+  el mouse) y cierra la terminal con un solo clic. Si aún corre un programa, pide confirmar antes.
 - **Terminales sueltas**: se pueden usar sin crear un espacio. El sidebar lista espacios y terminales
   en una sola lista, con los botones `+ Terminal` y `+ Space` (también `mer ctl terminal new` y
   «New terminal» en la paleta). Arrastrar una terminal sobre un espacio la une a él; el menú ofrece
@@ -33,6 +35,9 @@ usa versionado semántico mientras no llegue a 1.0, las versiones `0.x` pueden c
   ~720 px el menú lateral pasa a una tira de pestañas arriba y cada ajuste apila su control bajo su
   nombre. Los diálogos y la paleta nunca pasan del tamaño de la ventana, y la ventana tiene un
   mínimo de 480×320.
+
+### Corregido
+- La × de cada pestaña queda fija al borde derecho aunque el nombre sea corto.
 
 ### Cambiado
 - **Títulos de pestañas más predecibles**: un nombre puesto a mano gana siempre; un comando solo nombra

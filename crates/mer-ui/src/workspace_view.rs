@@ -658,6 +658,16 @@ impl WorkspaceView {
         );
     }
 
+    /// The × on a standalone terminal's row: one click when the shell is idle, a confirmation
+    /// when something still runs in it.
+    fn close_terminal(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.busy_in_space(index, cx).is_empty() {
+            self.delete_space(index, cx);
+        } else {
+            self.request_delete_space(index, cx);
+        }
+    }
+
     /// Deletes a space with its terminals and their saved history. Deleting the last space
     /// leaves a fresh one.
     fn delete_space(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1335,6 +1345,8 @@ impl WorkspaceView {
                     }))
                     .child(
                         div()
+                            // Takes the spare room so the × stays pinned to the right edge.
+                            .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_row()
