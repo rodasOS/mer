@@ -17,6 +17,8 @@ Remoto: `git@github.com:rodasOS/mer.git`. Licencia MIT.
 
 - Rust 1.96, edición 2024, fijado en `rust-toolchain.toml`. `unsafe` denegado.
 - UI: GPUI (Zed), fijado a un commit concreto en `Cargo.toml`; no lo actualices sin pedirlo.
+  `vendor/gpui_wgpu` es una copia local de esa crate con un solo cambio (Vulkan primero, ADR 0007; ver su
+  README): al subir el fijado de GPUI hay que rehacerla desde la nueva revisión.
 - Motor de terminal: `alacritty_terminal` 0.26.
 - Persistencia: SQLite (`rusqlite` + `rusqlite_migration`) y `zstd` para el historial.
 - IPC: socket Unix, JSON de una línea con `{"v":1,…}`.
@@ -42,7 +44,7 @@ Workspace de 8 crates + `xtask`:
 
 Regla: la lógica va en los crates sin ventana (se prueba sin GPU); `mer-ui` solo dibuja y
 conecta. Documentación: `README.md`, `docs/` (arquitectura, atajos, configuración, agentes,
-performance) y `docs/adr/` (decisiones 0001–0006).
+performance) y `docs/adr/` (decisiones 0001–0009).
 
 ## Arquitectura que no se debe romper (ADR 0005)
 
@@ -69,12 +71,30 @@ performance) y `docs/adr/` (decisiones 0001–0006).
 - Estados de agentes: la lógica pura vive en `mer-agents` (`AgentStatus::after`, `after_interrupt`,
   `after_submit`, `parse_claude_payload`). No metas lógica de estados en `mer-ui`.
 - Nombre de pestañas: `Tab::display_title` (en `mer-core`) elige nombre del usuario → título/comando/etiqueta
-  del `Program` en primer plano → título del shell. `Pane.program` es solo en vivo (`serde(skip)`).
+  del `Program` en primer plano **solo si `Program::visible`** (lleva ~800 ms; el temporizador de un disparo está
+  en `set_program`) → nombre de la carpeta (`Pane::folder_name`) → título del shell → `shell`. El prompt (`mer:ctx:`)
+  borra el programa al instante si el shell está libre (`on_prompt_report`). La ventana usa `display_title()`, nunca
+  su propia regla. `Pane.program` es solo en vivo (`serde(skip)`).
   Los títulos que empiezan con `mer:cmd:` son del canal privado de la integración de shell y nunca
   se muestran. Los tooltips (`tooltip::tip`) no parten líneas: GPUI los maqueta a ancho mínimo.
 - Pintado de la terminal (`terminal_view.rs`): copiar celdas bajo el candado (`copy_cells`), soltarlo
   y armar tramos (`build_runs`) con buffers reutilizados (`PaintScratch`). No vuelvas a estilar con el
   candado tomado. La pendiente de optimizaciones con costo está en `TODO.md`.
+- Barra de scroll (`mer-term/src/scrollbar.rs`, aritmética pura con tests): `TerminalView` lee `scroll_state()`
+  (un solo candado) y dibuja pulgar y botón «ir al final»; se oculta con un temporizador de un disparo
+  (`flash_scrollbar`), nunca con sondeos. No se muestra en pantalla alterna.
+- Chips de rama git y node (`workspace_view/context.rs`, ADR 0008): el estado es `PaneContext` (`mer-core`),
+  alimentado por el título privado `mer:ctx:` del prompt de zsh (`on_title` lo traga: nunca es un título).
+  La rama es una lectura de `.git/HEAD` en el executor de fondo; las listas se leen solo al abrir el selector.
+  **Nunca se escribe en la PTY si el shell no está en el prompt o hay un programa en primer plano**
+  (`PaneContext::accepts_commands` + `mer_agents::foreground`, comprobado al abrir y al elegir). No leas
+  `/proc` durante el render: la atenuación de los chips usa `pane.program` y `at_prompt`.
+  La versión que pide el proyecto (`.nvmrc`, `PaneContext::required_node`/`node_fit`) se lee **perezosa**:
+  solo si cambia `(cwd, rama)`, en el executor de fondo y al abrir el selector; nunca se ejecuta `nvm` ni `node`.
+- Ajustes (`workspace_view/settings_panel.rs`): un `Section` por panel y un `render_*`; los paneles grandes viven en
+  `settings_panel/` (Performance). El panel solo agrupa: las claves de `config.toml` no cambian de tabla.
+  Lo opcional que cuesta algo (scrollback, barra, chips, hint de node) va en **Performance**, con su costo en la
+  descripción; una función opcional nueva se añade ahí y a `set_optional`.
 - Búsqueda (`mer-term/src/search.rs`, lógica pura con tests; barra en `terminal_view.rs`): el resaltado
   solo mira las líneas visibles y solo corre mientras la barra está abierta. `TerminalView::focus_handle()`
   devuelve el cuadro de búsqueda mientras está abierto, para que `focus_active` no le robe el foco.
@@ -83,6 +103,14 @@ performance) y `docs/adr/` (decisiones 0001–0006).
 - Cambiar el programa de un panel pasa SIEMPRE por `WorkspaceView::set_program` (mide cuánto duró para el
   aviso de comando largo). Mover pestañas/espacios: `Workspace::move_tab`, `move_space`, `move_tab_to_space`
   (un espacio nunca queda sin pestañas); la interfaz del arrastre está en `workspace_view/drag.rs`.
+- Terminales sueltas (ADR 0009): `Space` tiene un `SpaceKind` (`Space` | `Terminal`). **Una terminal es un espacio con
+  exactamente una pestaña** (puede tener paneles): `add_tab` dentro de una terminal crea otra terminal, nunca se mueve una
+  pestaña a una terminal, `adopt_terminal`/`detach_tab`/`promote_to_space` son las únicas conversiones, y `from_data`
+  rechaza una terminal con ≠1 pestañas. El texto de una fila sale de `Space::display_name()` (no de `space.name`, vacío en
+  una terminal) y el del cuadro de renombrar de `editable_name()`. El sidebar vive en `workspace_view/sidebar.rs`: colapsado
+  **no se dibuja** (`render_sidebar` devuelve `None`; no hay riel). `render_sidebar_toggle` está en la cabecera del sidebar
+  y, oculto, en la barra de pestañas; una terminal suelta no tiene barra (`render_tab_bar` devuelve `None`) salvo una
+  franja de 28 px con el botón mientras el sidebar está oculto. Un campo nuevo en `spaces` = migración nueva en `db.rs` y `#[serde(default)]`.
 - Dormir: una pestaña dormida no carga procesos; la pestaña visible nunca carga dormida.
 - Cambios de esquema de SQLite = migración nueva (`db.rs`); los datos nuevos llevan
   `#[serde(default)]` para no romper bases viejas.
@@ -131,7 +159,7 @@ WAYLAND_DISPLAY=/run/user/$(id -u)/wayland-1 cargo run
 - `pw-play` dentro de un `XDG_RUNTIME_DIR` aislado falla: añade `PIPEWIRE_RUNTIME_DIR=/run/user/$(id -u)`.
 - Para ver la interfaz sin teclado ni mouse: `mer ctl show <palette|rename-space|rename-tab|
   confirm-delete|confirm-sleep|space-menu|tab-menu|pane-menu|sidebar-menu|settings:<sección>>`,
-  `mer ctl zoom in|out|reset`, `mer ctl ui-scale in|out|reset`, `mer ctl sidebar collapse|expand`,
+  `mer ctl show <branch-picker|node-picker>`, `mer ctl show settings:<appearance|terminal|spaces|agents|performance|shortcuts>`, `mer ctl zoom in|out|reset`, `mer ctl ui-scale in|out|reset`, `mer ctl sidebar collapse|expand`, `mer ctl terminal new [--cwd DIR]`,
   `mer ctl sidebar-width <px>`, `mer ctl space list`.
 - Capturas: `spectacle -a -b -n -o <archivo>` con la ventana **activa**; comprueba el tamaño
   (≈1130x798) antes de mirarla, porque puede capturar la ventana equivocada.

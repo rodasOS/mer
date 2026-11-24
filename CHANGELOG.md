@@ -5,6 +5,50 @@ usa versionado semántico mientras no llegue a 1.0, las versiones `0.x` pueden c
 
 ## [Sin publicar]
 
+### Añadido
+- **Terminales sueltas**: se pueden usar sin crear un espacio. El sidebar lista espacios y terminales
+  en una sola lista, con los botones `+ Terminal` y `+ Space` (también `mer ctl terminal new` y
+  «New terminal» en la paleta). Arrastrar una terminal sobre un espacio la une a él; el menú ofrece
+  «Turn into space» y, en una pestaña, «Open as terminal». Las bases de datos existentes se migran
+  solas (esquema v3, ADR 0009); un `mer` anterior no abre una base ya migrada.
+- **Barra de scroll** en cada terminal: aparece al pasar el mouse o al hacer scroll, se arrastra
+  y un clic en la pista salta a esa posición. No se muestra en programas de pantalla completa.
+- **Botón «ir al final»** (↓) que aparece cuando subiste por el historial, con un punto de
+  aviso si llegó salida nueva mientras estabas arriba. Atajo `scroll_to_bottom`
+  (`ctrl-shift-end`) y entrada en la paleta.
+- **Chips de rama git y versión de node (nvm)** en una franja bajo cada terminal; al pulsarlos se
+  abre una lista con buscador. Elegir escribe `git switch …` o `nvm use …` en el shell, pero solo
+  si está esperando en el prompt y no hay otro programa en primer plano (un Claude, un editor o un
+  servidor nunca reciben teclas). Ajustes: `terminal.scrollbar` y `terminal.context_chips`.
+  Para verlos hay que reiniciar los shells ya abiertos (ADR 0008).
+- **Versión de node que pide el proyecto** (`.nvmrc` / `.node-version`): el chip de node se ve
+  verde con ✓, ámbar o rojo según coincida con la activa, y la lista marca la versión pedida.
+  Carga perezosa, en segundo plano y sin ejecutar `nvm`; se apaga con `terminal.node_version_hint`.
+- **Panel de Ajustes reorganizado**: *Terminal* reúne shell y tipografía del texto, *Appearance*
+  queda con la interfaz, y el panel nuevo **Performance** agrupa lo opcional (scrollback, barra de
+  scroll, chips, versión de node) con su costo y los botones «Everything on» / «Lightweight».
+  Las claves de `config.toml` no cambian.
+- **Ajustes y diálogos responsivos**: el panel de Ajustes se ajusta al tamaño de la ventana (ya no
+  lo cortan los bordes), con un margen, scroll interno, el título y un botón × fijos, y por debajo de
+  ~720 px el menú lateral pasa a una tira de pestañas arriba y cada ajuste apila su control bajo su
+  nombre. Los diálogos y la paleta nunca pasan del tamaño de la ventana, y la ventana tiene un
+  mínimo de 480×320.
+
+### Cambiado
+- **Títulos de pestañas más predecibles**: un nombre puesto a mano gana siempre; un comando solo nombra
+  la pestaña tras ~0,8 s en primer plano (un `ls` o un `clear` no parpadean); en reposo todas muestran
+  el nombre de su carpeta, y el comando ya no se queda pegado al volver al prompt (tampoco falsea el
+  aviso de «comando largo»). El título de la ventana usa la misma regla, y el sidebar muestra bajo
+  cada terminal su carpeta con la rama.
+- **El sidebar se oculta del todo** al colapsarlo (se quitó la franja de iconos). Un botón
+  arriba, `Ctrl+Shift+B` o la paleta lo vuelven a mostrar. Una terminal suelta ya no tiene barra de
+  pestañas (no tiene pestañas): gana esas filas, y su nombre, carpeta y rama están en su fila del
+  sidebar; con el sidebar oculto queda una franja delgada con el botón para volver.
+- **Menos memoria en reposo** (RSS de ~150 MB a ~90 MB en una ventana inactiva, sin perder velocidad):
+  el heap ya no usa páginas enormes (THP) y el arranque de la GPU prueba primero Vulkan solo, con
+  OpenGL como respaldo si no hay Vulkan o solo hay un adaptador por software (ADR 0007, copia
+  local de `gpui_wgpu` en `vendor/gpui_wgpu`).
+
 ## [0.1.1] - 2026-11-21
 
 ### Añadido

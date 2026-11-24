@@ -15,7 +15,9 @@ mer ──► mer-ui ──► mer-term ──► alacritty_terminal (PTY, parse
 
 ## El modelo (`mer-core`)
 
-`Workspace` contiene `Space`s; cada uno tiene `Tab`s; cada pestaña tiene un árbol de divisiones
+`Workspace` contiene `Space`s (un `SpaceKind::Space` es un grupo de pestañas y un
+`SpaceKind::Terminal` es una terminal suelta: **un espacio con exactamente una pestaña**, decisión
+del [ADR 0009](adr/0009-terminals-without-spaces.md)); cada uno tiene `Tab`s; cada pestaña tiene un árbol de divisiones
 (`Layout`) cuyas hojas son `Pane`s. Un panel guarda solo *metadatos*: carpeta, título y el
 último agente visto. **Las terminales vivas no forman parte del modelo**: la interfaz mantiene
 una terminal por cada panel de los espacios y pestañas despiertos y las crea o descarta para
@@ -55,6 +57,11 @@ nunca espera al disco. El historial son archivos aparte, uno por panel.
   Se crea **una vez**, sin ventana, y las ventanas se acoplan y desacoplan
   ([ADR 0005](adr/0005-view-outlives-window.md)). Nada en ella recibe una `Window`: el foco se
   *pide* y se aplica al dibujar.
+- La barra de scroll es aritmética pura (`mer-term/src/scrollbar.rs`: posición y alto del pulgar y
+  su inversa para arrastrar); `TerminalView` solo la dibuja y la oculta con un temporizador de un
+  disparo, sin sondeos. Los chips de rama y node viven en `workspace_view/context.rs`; su estado
+  (`PaneContext`, en `mer-core`) lo alimenta el canal `mer:ctx:` del shell
+  ([ADR 0008](adr/0008-shell-context-chips.md)).
 - Los comandos (`Cmd`) son el punto común de los atajos, la paleta, los menús y `mer ctl`.
 - `settings_panel` edita la misma estructura `Config` que el archivo TOML.
 
@@ -78,4 +85,5 @@ comentarios. Un observador de archivos (`notify`) recarga la configuración en c
 ## Decisiones
 
 Registradas en [`adr/`](adr): GPUI para la interfaz (0001), `alacritty_terminal` como motor
-(0002), un solo proceso (0003), SQLite (0004) y la vista que sobrevive a su ventana (0005).
+(0002), un solo proceso (0003), SQLite (0004) la vista que sobrevive a su ventana (0005), las releases públicas (0006), el arranque de la GPU
+con Vulkan primero (0007) los chips de contexto del shell (0008) y las terminales sueltas con el sidebar que se oculta (0009).
